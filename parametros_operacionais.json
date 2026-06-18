@@ -1,0 +1,74 @@
+{
+  "cadastro_clientes_path": "TESTE.xlsx",
+  "mapeamento_cidades_rotas": {
+    "SAO PAULO": "ROTA_CAPITAL",
+    "DIADEMA": "ROTA_ABC",
+    "SAO BERNARDO DO CAMPO": "ROTA_ABC",
+    "SANTO ANDRE": "ROTA_ABC",
+    "MAUA": "ROTA_ABC",
+    "GUARULHOS": "ROTA_LESTE",
+    "ARUJA": "ROTA_LESTE",
+    "MOGI DAS CRUZES": "ROTA_LESTE",
+    "CAMPINAS": "ROTA_INTERIOR_RMC",
+    "VALINHOS": "ROTA_INTERIOR_RMC",
+    "SUMARE": "ROTA_INTERIOR_RMC",
+    "AMERICANA": "ROTA_INTERIOR_RMC",
+    "CONTAGEM": "ROTA_MG",
+    "GARIBALDI": "ROTA_SUL",
+    "JUNDIAI": "ROTA_CAPITAL"
+  },
+  "rotas_vizinhas": {
+    "ROTA_CAPITAL": "ROTA_ABC, ROTA_LESTE",
+    "ROTA_ABC": "ROTA_CAPITAL, ROTA_LESTE",
+    "ROTA_LESTE": "ROTA_CAPITAL, ROTA_ABC",
+    "ROTA_INTERIOR_RMC": "ROTA_CAPITAL",
+    "ROTA_MG": "ROTA_INTERIOR_RMC",
+    "ROTA_SUL": "ROTA_OUTROS",
+    "ROTA_OUTROS": ""
+  },
+  "tempos_viagem_rota_min": {
+    "ROTA_CAPITAL": 240,
+    "ROTA_ABC": 210,
+    "ROTA_LESTE": 210,
+    "ROTA_INTERIOR_RMC": 120,
+    "ROTA_MG": 300,
+    "ROTA_SUL": 360,
+    "ROTA_OUTROS": 300
+  },
+  "tempo_descarga_minutos": 20,
+  "tempo_almoco_minutos": 60,
+  "jornada_maxima_minutos": 600,
+  "peso_max_spyder_no_bau_kg": 800,
+  "comprimentos_longos_mm": "4800, 5000, 5900, 6000",
+  "veiculos": {
+    "VAN_MASTER": {
+      "nome": "VAN MASTER",
+      "capacidade_peso": 1800,
+      "tipo": "BAU",
+      "disponivel": false,
+      "reserva": true
+    },
+    "11.180_BAU_1": {
+      "nome": "11.180 - BAÚ #1",
+      "capacidade_peso": 6000,
+      "tipo": "BAU",
+      "disponivel": true,
+      "reserva": false
+    },
+    "11.180_BAU_2": {
+      "nome": "11.180 - BAÚ #2",
+      "capacidade_peso": 6100,
+      "tipo": "BAU",
+      "disponivel": true,
+      "reserva": false
+    },
+    "10.160_SYDER": {
+      "nome": "10.160 - SYDER",
+      "capacidade_peso": 4700,
+      "tipo": "SYDER",
+      "disponivel": true,
+      "reserva": false
+    }
+  },
+  "motivos_backlog": "FROTA INSUFICIENTE, LIMITE DE JORNADA ATINGIDO, BLOQUEIO FISCAL, TRAVADO COMERCIAL, RETIRA FOB, TERCEIRO"
+}

@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.vscode/
+.idea/
+.cursor/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Dados operacionais e uploads (não versionar)
+data/sessions/*
+!data/sessions/.gitkeep
+*.pdf
+*.xlsb
+*.msg
+ingestao_*.json
+historico_operacional.json
+DEBUG_INGESTAO.xlsx
+~$*.xlsx
+~$*.xls
+
+# Cadastros e planilhas locais (copiar manualmente no ambiente)
+TESTE.xlsx
+TESTE.xlsx - Planilha1.csv
+ROTA DIARIA*.xlsx
+
+# Arquivos compactados / backups
+*.zip
+
+# Frontend (route-genius-main)
+route-genius-main/node_modules/
+route-genius-main/dist/
+route-genius-main/dist-ssr/
+route-genius-main/.output/
+route-genius-main/.vinxi/
+route-genius-main/.tanstack/
+route-genius-main/.nitro/
+route-genius-main/.wrangler/
+route-genius-main/.dev.vars
+route-genius-main/*.local
+
+# Logs
+*.log

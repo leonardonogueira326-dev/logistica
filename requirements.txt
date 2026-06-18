@@ -1,0 +1,11 @@
+pdfplumber
+pandas
+pyxlsb
+extract-msg
+openpyxl
+python-dateutil
+streamlit
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
