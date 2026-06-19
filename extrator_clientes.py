@@ -104,6 +104,13 @@ class CadastroClientes:
                 razao = normalizar_texto(row.get(col_map["razao_social"], ""))
                 endereco = normalizar_texto(row.get(col_map["endereco"], ""))
                 rep_cod = str(row.get(col_map.get("representante_codigo", ""), "") or "").strip()
+                aceita_raw = str(row.get(col_map.get("aceita_antecipacao", ""), "") or "").strip().upper()
+                if aceita_raw in ("NAO", "NÃO", "N", "0", "FALSE", "NAO ACEITA", "NÃO ACEITA"):
+                    aceita = "NAO"
+                elif aceita_raw:
+                    aceita = "SIM"
+                else:
+                    aceita = "SIM"
 
                 lookup[chave] = {
                     "codigo": chave,
@@ -115,6 +122,7 @@ class CadastroClientes:
                     "representante_codigo": rep_cod,
                     "representante_nome": representante,
                     "representante": representante,
+                    "aceita_antecipacao": aceita,
                 }
             except Exception:
                 continue
@@ -143,6 +151,8 @@ class CadastroClientes:
                 resultado["representante"] = col
             elif "representante" in norm:
                 resultado["representante_codigo"] = col
+            elif "aceita" in norm and "antecip" in norm:
+                resultado["aceita_antecipacao"] = col
 
         return resultado
 

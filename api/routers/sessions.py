@@ -5,10 +5,11 @@ from __future__ import annotations
 from io import BytesIO
 import sys
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -16,6 +17,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from api.schemas import (  # noqa: E402
+    AnteciparPedidoBodySchema,
+    AnteciparPedidoResponseSchema,
     ConsolidadoPatchSchema,
     ConsolidadosListSchema,
     IngestaoResponseSchema,
@@ -29,7 +32,9 @@ from api.schemas import (  # noqa: E402
     ValidacaoConfirmarBodySchema,
 )
 from api.session_store import SessionNotFoundError, store  # noqa: E402
+from api.ia_worker import processar_fila_llm, tem_pendentes_ia  # noqa: E402
 from aprendizado_regras import salvar_regras  # noqa: E402
+from memoria_operacional import salvar_memoria  # noqa: E402
 from models import PedidoConsolidado  # noqa: E402
 from motor_ingestao import MotorIngestao  # noqa: E402
 from motor_logistica import MotorLogistica  # noqa: E402
@@ -37,6 +42,7 @@ import config  # noqa: E402
 from normalizador import normalizar_texto, resolver_rota_logistica  # noqa: E402
 from param_manager import carregar_parametros  # noqa: E402
 from gerador_romaneio import gerar_romaneio_xlsx, nome_arquivo_romaneio  # noqa: E402
+from historico_manager import arquivar_sessao  # noqa: E402
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -76,9 +82,40 @@ def _roteirizacao_from_motor(motor: MotorLogistica, session_id: str) -> Roteiriz
         rotas=data["rotas"],
         itens_por_veiculo=data["itens_por_veiculo"],
         backlog=data["backlog"],
+        backlog_futuro=data.get("backlog_futuro", []),
         coletas=data.get("coletas", []),
         jornada_maxima_minutos=int(params.get("jornada_maxima_minutos", 600)),
     )
+
+
+def _patch_consolidado_session(session_id: str, numero_pedido: str, patch: dict[str, Any]) -> bool:
+    """Atualiza pedido em ingestao ou consolidados validados."""
+    validated = store.is_validated(session_id)
+    if validated:
+        data = store.load_consolidados_validados(session_id)
+        fname = "consolidados_validados"
+    else:
+        data = store.load_ingestao(session_id)
+        fname = "ingestao"
+
+    if not data:
+        return False
+
+    found = False
+    for item in data.get("consolidados", []):
+        if item.get("numero_pedido") == numero_pedido or item.get("numero_pedido_norm") == numero_pedido:
+            item.update(patch)
+            found = True
+            break
+
+    if not found:
+        return False
+
+    if validated:
+        store.save_consolidados_validados(session_id, data)
+    else:
+        store.save_ingestao(session_id, data)
+    return True
 
 
 @router.post("/upload", response_model=UploadResponseSchema)
@@ -108,7 +145,10 @@ async def upload_session(
 
 
 @router.post("/{session_id}/ingest", response_model=IngestaoResponseSchema)
-def ingest_session(session_id: str) -> IngestaoResponseSchema:
+def ingest_session(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+) -> IngestaoResponseSchema:
     try:
         session_dir = store.session_path(session_id)
     except SessionNotFoundError:
@@ -124,6 +164,9 @@ def ingest_session(session_id: str) -> IngestaoResponseSchema:
 
     payload = motor.para_dict()
     store.save_ingestao(session_id, payload)
+
+    if tem_pendentes_ia(payload):
+        background_tasks.add_task(processar_fila_llm, session_id)
 
     return IngestaoResponseSchema(
         session_id=session_id,
@@ -234,6 +277,7 @@ def confirmar_validacao(
         raise HTTPException(status_code=404, detail="Ingestão não executada.")
 
     regras_salvas = 0
+    memoria_salva = 0
     if body and body.regras_novas:
         regras_validas: dict[str, str] = {}
         for chave, status in body.regras_novas.items():
@@ -242,6 +286,15 @@ def confirmar_validacao(
             regras_validas[str(chave)] = str(status)
         if regras_validas:
             regras_salvas = salvar_regras(regras_validas)
+
+    if body and body.memoria_novas:
+        memoria_validas: dict[str, str] = {}
+        for chave, status in body.memoria_novas.items():
+            if chave.startswith("_") or not status or not chave.strip():
+                continue
+            memoria_validas[str(chave)] = str(status)
+        if memoria_validas:
+            memoria_salva = salvar_memoria(memoria_validas)
 
     if store.is_validated(session_id):
         total = len(ingest.get("consolidados", []))
@@ -261,10 +314,21 @@ def confirmar_validacao(
     store.save_consolidados_validados(session_id, payload)
     store.set_validated(session_id, True)
 
+    try:
+        arquivar_sessao(
+            session_id,
+            payload.get("consolidados", []),
+            data_entrega=store.get_meta(session_id).get("validated_at", "")[:10],
+        )
+    except Exception:
+        pass
+
     total = len(payload["consolidados"])
     msg = f"Validação confirmada — {total} pedidos prontos para roteirização."
     if regras_salvas:
         msg += f" {regras_salvas} regra(s) salva(s) no aprendizado local."
+    if memoria_salva:
+        msg += f" {memoria_salva} entrada(s) salva(s) na memória operacional."
     return ValidacaoConfirmarSchema(
         session_id=session_id,
         validated=True,
@@ -302,6 +366,7 @@ def get_roteirizacao(session_id: str) -> RoteirizacaoSchema:
         raise HTTPException(status_code=404, detail="Roteirização não executada.")
 
     data.setdefault("coletas", [])
+    data.setdefault("backlog_futuro", [])
     params = carregar_parametros()
     return RoteirizacaoSchema(
         session_id=session_id,
@@ -347,6 +412,7 @@ def mover_pedido(session_id: str, body: MoverPedidoSchema) -> MoverPedidoRespons
         for vid, itens in data.get("itens_por_veiculo", {}).items()
     }
     motor.backlog = data.get("backlog", [])
+    motor.backlog_futuro = data.get("backlog_futuro", [])
     motor.coletas = data.get("coletas", [])
 
     ok, warning = motor.mover_pedido(
@@ -364,6 +430,89 @@ def mover_pedido(session_id: str, body: MoverPedidoSchema) -> MoverPedidoRespons
     return MoverPedidoResponseSchema(
         ok=True,
         warning=warning,
+        roteirizacao=_roteirizacao_from_motor(motor, session_id),
+    )
+
+
+@router.post("/{session_id}/antecipar", response_model=AnteciparPedidoResponseSchema)
+def antecipar_pedido(
+    session_id: str,
+    body: AnteciparPedidoBodySchema,
+) -> AnteciparPedidoResponseSchema:
+    try:
+        store.session_path(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada.")
+
+    rote_data = store.load_roteirizacao(session_id)
+    if not rote_data:
+        raise HTTPException(status_code=404, detail="Roteirização não executada.")
+
+    motivo = (body.motivo_adiantamento or "").strip()
+    if not motivo:
+        raise HTTPException(status_code=400, detail="Informe o motivo do adiantamento.")
+
+    rep = (body.representante_autorizou or "").strip()
+    agora = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    audit_linha = f"ANTECIPADO em {agora}: {motivo}"
+    if rep:
+        audit_linha += f" | Autorizado por: {rep}"
+
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    pedido_ref = next(
+        (c for c in consolidados if c.numero_pedido == body.numero_pedido),
+        None,
+    )
+    if not pedido_ref:
+        raise HTTPException(status_code=404, detail=f"Pedido {body.numero_pedido} não encontrado.")
+
+    auditoria = (pedido_ref.auditoria + " | " + audit_linha).strip(" |")
+    ok_patch = _patch_consolidado_session(
+        session_id,
+        body.numero_pedido,
+        {
+            "data_prevista_recebimento": "",
+            "motivo_adiantamento": motivo,
+            "representante_autorizou": rep,
+            "status": config.COD_LIBERADO,
+            "auditoria": auditoria,
+        },
+    )
+    if not ok_patch:
+        raise HTTPException(status_code=404, detail="Não foi possível atualizar o consolidado.")
+
+    motor = MotorLogistica()
+    motor.rotas = [_dict_to_rota(r) for r in rote_data.get("rotas", [])]
+    motor.itens_por_veiculo = {
+        vid: [_dict_to_item(i) for i in itens]
+        for vid, itens in rote_data.get("itens_por_veiculo", {}).items()
+    }
+    motor.backlog = rote_data.get("backlog", [])
+    motor.backlog_futuro = rote_data.get("backlog_futuro", [])
+    motor.coletas = rote_data.get("coletas", [])
+
+    ok, err, destino = motor.antecipar_para_hoje(body.numero_pedido)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
+
+    payload = motor.para_dict()
+    store.save_roteirizacao(session_id, payload)
+
+    destino_msg = {
+        "BACKLOG": "fila de alocação de hoje",
+    }.get(destino, destino)
+    if destino not in ("BACKLOG",):
+        for r in motor.rotas:
+            if r.veiculo_id == destino:
+                destino_msg = r.veiculo_nome
+                break
+
+    return AnteciparPedidoResponseSchema(
+        ok=True,
+        session_id=session_id,
+        numero_pedido=body.numero_pedido,
+        destino=destino,
+        message=f"Pedido antecipado e alocado em {destino_msg}.",
         roteirizacao=_roteirizacao_from_motor(motor, session_id),
     )
 

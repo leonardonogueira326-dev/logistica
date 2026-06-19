@@ -1,10 +1,17 @@
 import type {
+  AnteciparPedidoBody,
+  AnteciparPedidoResponse,
+  ConfigResponse,
+  ConfiguracaoOperacional,
   ConsolidadoPatch,
   ConsolidadosList,
+  HistoricoResponse,
   IngestaoResponse,
   MoverPedidoRequest,
   MoverPedidoResponse,
+  PedidoManualBody,
   Roteirizacao,
+  SetupResponse,
   UploadResponse,
   ValidacaoConfirmar,
 } from "./logistica-types";
@@ -65,11 +72,12 @@ export async function patchConsolidado(
 export async function confirmarValidacao(
   sessionId: string,
   regrasNovas: Record<string, string> = {},
+  memoriaNovas: Record<string, string> = {},
 ): Promise<ValidacaoConfirmar> {
   return request<ValidacaoConfirmar>(`/sessions/${sessionId}/validacao/confirmar`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ regras_novas: regrasNovas }),
+    body: JSON.stringify({ regras_novas: regrasNovas, memoria_novas: memoriaNovas }),
   });
 }
 
@@ -118,4 +126,51 @@ export async function moverPedido(
 
 export async function healthCheck(): Promise<{ status: string }> {
   return request("/health");
+}
+
+export async function getConfig(): Promise<ConfigResponse> {
+  return request<ConfigResponse>("/config");
+}
+
+export async function saveConfig(config: ConfiguracaoOperacional): Promise<ConfigResponse> {
+  return request<ConfigResponse>("/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+}
+
+/** @deprecated Use getConfig */
+export async function getSetup(): Promise<SetupResponse> {
+  const resp = await getConfig();
+  return { config: resp.config, arquivo: resp.arquivo };
+}
+
+/** @deprecated Use saveConfig */
+export async function saveSetup(config: ConfiguracaoOperacional): Promise<SetupResponse> {
+  const resp = await saveConfig(config);
+  return { config: resp.config, arquivo: resp.arquivo };
+}
+
+export async function buscarHistorico(q: string, limite = 20): Promise<HistoricoResponse> {
+  const params = new URLSearchParams({ q, limite: String(limite) });
+  return request<HistoricoResponse>(`/historico?${params}`);
+}
+
+export async function anteciparPedido(
+  sessionId: string,
+  body: AnteciparPedidoBody,
+): Promise<AnteciparPedidoResponse> {
+  return request<AnteciparPedidoResponse>(`/sessions/${sessionId}/antecipar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+export async function criarPedidoManual(body: PedidoManualBody): Promise<{ ok: boolean; message: string }> {
+  return request("/pedidos-manuais", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }

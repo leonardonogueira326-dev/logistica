@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Brain,
   CheckCircle2,
   ClipboardCheck,
   Loader2,
@@ -22,11 +23,20 @@ import {
 } from "@/hooks/useLogisticaSession";
 import type { PedidoConsolidado } from "@/lib/logistica-types";
 import {
+  COD_PROCESSANDO_IA,
   COD_REVISAO_OBRIGATORIA,
   STATUS_FRETE_OPCOES,
+  montarChaveMemoriaOperacional,
   montarChaveRegraAprendizado,
   palavraChaveParaAprendizado,
+  rotuloSugestaoLlm,
 } from "@/lib/logistica-types";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/validacao")({
@@ -61,7 +71,10 @@ function ValidacaoPage() {
     const revisoes = data.consolidados.filter(
       (c) => c.revisao_obrigatoria === COD_REVISAO_OBRIGATORIA,
     ).length;
-    return { total, enriquecidos, liberados, revisoes };
+    const processandoIa = data.consolidados.filter(
+      (c) => c.status_ia === COD_PROCESSANDO_IA,
+    ).length;
+    return { total, enriquecidos, liberados, revisoes, processandoIa };
   }, [data]);
 
   const handleConfirm = async () => {
@@ -69,6 +82,7 @@ function ValidacaoPage() {
     setConfirming(true);
     try {
       const regrasNovas: Record<string, string> = {};
+      const memoriaNovas: Record<string, string> = {};
       for (const row of data.consolidados) {
         const key = row.numero_pedido_norm || row.numero_pedido;
         if (!salvarRegras[key]) continue;
@@ -79,9 +93,14 @@ function ValidacaoPage() {
         if (chave && draft.status) {
           regrasNovas[chave] = draft.status;
         }
+
+        const chaveMemoria = montarChaveMemoriaOperacional(row.observacao_comercial);
+        if (chaveMemoria && draft.status) {
+          memoriaNovas[chaveMemoria] = draft.status;
+        }
       }
 
-      await confirmMutation.mutateAsync({ sid: sessionId, regrasNovas });
+      await confirmMutation.mutateAsync({ sid: sessionId, regrasNovas, memoriaNovas });
       navigate({ to: "/roteirizar" });
     } finally {
       setConfirming(false);
@@ -155,7 +174,7 @@ function ValidacaoPage() {
       )}
 
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           {[
             { label: "Consolidados", value: stats.total },
             { label: "Enriquecidos mestre", value: stats.enriquecidos },
@@ -164,6 +183,12 @@ function ValidacaoPage() {
               label: "Revisão obrigatória",
               value: stats.revisoes,
               alert: stats.revisoes > 0,
+            },
+            {
+              label: "Processando IA",
+              value: stats.processandoIa,
+              alert: stats.processandoIa > 0,
+              highlight: stats.processandoIa > 0,
             },
             {
               label: "Status",
@@ -175,12 +200,20 @@ function ValidacaoPage() {
               className={cn(
                 "rounded-lg border bg-card p-4",
                 s.alert ? "border-destructive/50 bg-destructive/5" : "border-border",
+                s.highlight && "border-primary/50 bg-primary/5",
               )}
             >
               <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
                 {s.label}
               </div>
-              <div className={cn("text-xl font-bold mt-1", s.alert && "text-destructive")}>
+              <div
+                className={cn(
+                  "text-xl font-bold mt-1 flex items-center gap-1.5",
+                  s.alert && "text-destructive",
+                  s.highlight && "text-primary",
+                )}
+              >
+                {s.highlight && <Loader2 className="w-4 h-4 animate-spin" />}
                 {s.value}
               </div>
             </div>
@@ -189,8 +222,9 @@ function ValidacaoPage() {
       )}
 
       {data && (
-        <div className="bg-card border border-border rounded-xl shadow-sm overflow-x-auto">
-          <table className="w-full text-sm min-w-[1100px]">
+        <TooltipProvider delayDuration={200}>
+          <div className="bg-card border border-border rounded-xl shadow-sm overflow-x-auto">
+            <table className="w-full text-sm min-w-[1100px]">
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground bg-muted/40">
                 <th className="px-4 py-2.5">Pedido</th>
@@ -228,8 +262,9 @@ function ValidacaoPage() {
                 );
               })}
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+        </TooltipProvider>
       )}
     </div>
   );
@@ -252,7 +287,8 @@ function EditableRow({
 }) {
   const needsReview = row.revisao_obrigatoria === COD_REVISAO_OBRIGATORIA;
   const statusAlterado = draft.status !== row.status;
-  const podeEnsinar = needsReview && statusAlterado && !readonly;
+  const podeEnsinar = statusAlterado && !readonly;
+  const processandoIa = row.status_ia === COD_PROCESSANDO_IA;
   const palavraAprendizado = palavraChaveParaAprendizado(row);
 
   const update = (field: (typeof EDITABLE)[number], value: string) => {
@@ -281,7 +317,37 @@ function EditableRow({
         needsReview && "bg-destructive/[0.04]",
       )}
     >
-      <td className="px-4 py-2 font-mono text-xs">{row.numero_pedido}</td>
+      <td className="px-4 py-2 font-mono text-xs">
+        <div className="flex items-center gap-1.5">
+          <span>{row.numero_pedido}</span>
+          {processandoIa && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex text-muted-foreground" aria-label="Processando IA">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top">Classificação em processamento pela IA…</TooltipContent>
+            </Tooltip>
+          )}
+          {!processandoIa && row.flag_revisao_llm === "SIM" && row.sugestao_llm_status && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex text-primary hover:text-primary/80"
+                  aria-label="Sugestão da IA"
+                >
+                  <Brain className="w-3.5 h-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                Sugestão da IA: {rotuloSugestaoLlm(row.sugestao_llm_status)}
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
+      </td>
       <td className="py-2">
         {needsReview ? (
           <div className="flex items-start gap-1.5 text-xs text-destructive max-w-[160px]">
@@ -340,9 +406,9 @@ function EditableRow({
               className="mt-0.5"
             />
             <span>
-              Salvar regra
+              Salvar regra para este cliente
               <span className="block text-muted-foreground font-mono">
-                {row.cliente_codigo}+{palavraAprendizado}
+                {row.cliente_codigo}+{palavraAprendizado || "obs"}
               </span>
             </span>
           </label>

@@ -10,9 +10,9 @@ import {
   PackageCheck,
   Radio,
   Bell,
-  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { HistoricoSearch } from "@/components/HistoricoSearch";
 
 const navItems = [
   { to: "/", label: "Resumo Executivo", icon: LayoutDashboard },
@@ -95,13 +95,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="relative hidden md:block">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <input
-                placeholder="Buscar pedido, cliente, NF..."
-                className="pl-9 pr-3 py-2 text-sm rounded-md border border-input bg-background w-72 outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
+            <HistoricoSearch />
             <button className="relative p-2 rounded-md hover:bg-muted">
               <Bell className="w-4 h-4" />
               <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-destructive" />

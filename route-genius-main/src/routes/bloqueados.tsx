@@ -41,6 +41,18 @@ function BloqueadosPage() {
     const consolidados = consolidadosQuery.data;
 
     if (roteirizacao) {
+      for (const b of roteirizacao.backlog_futuro ?? []) {
+        result.push({
+          numero_pedido: b.numero_pedido ?? "",
+          cliente: b.cliente ?? "",
+          representante: b.representante ?? "NÃO IDENTIFICADO",
+          cidade_destino: b.cidade_destino ?? "",
+          rota_logistica: b.rota_logistica ?? "",
+          peso_kg: b.peso_kg ?? "0",
+          motivo: `BACKLOG FUTURO${b.data_prevista_recebimento ? ` — ${b.data_prevista_recebimento}` : ""}`,
+          origem: "backlog_futuro",
+        });
+      }
       for (const b of roteirizacao.backlog) {
         result.push({
           numero_pedido: b.numero_pedido ?? "",

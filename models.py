@@ -40,6 +40,10 @@ class PedidoFaturamento:
     of_ano: str = ""
     tipo_frete: str = ""
     aprendizado_aplicado: str = "NAO"
+    flag_revisao_llm: str = "NAO"
+    sugestao_llm_status: str = ""
+    status_ia: str = "NAO_APLICAVEL"
+    tipo_frete_regex: str = ""
     is_spyder: str = "NAO"
     is_dimensao_longa: str = "NAO"
     exige_syder: str = "NAO"
@@ -114,6 +118,17 @@ class PedidoConsolidado:
     revisao_obrigatoria: str = "NAO"
     motivo_quarentena: str = ""
     palavra_chave_quarentena: str = ""
+    flag_revisao_llm: str = "NAO"
+    sugestao_llm_status: str = ""
+    status_ia: str = "NAO_APLICAVEL"
+    tipo_frete_regex: str = ""
+    hash_id: str = ""
+    data_prevista_recebimento: str = ""
+    motivo_atraso: str = ""
+    fonte_entrada: str = "PDF"
+    motivo_adiantamento: str = ""
+    representante_autorizou: str = ""
+    aceita_antecipacao: str = "SIM"
 
 
 @dataclass

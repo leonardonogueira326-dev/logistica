@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,16 @@ import config
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_ROOT = PROJECT_ROOT / "data" / "sessions"
+
+_session_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _lock_for(session_id: str) -> threading.Lock:
+    with _locks_guard:
+        if session_id not in _session_locks:
+            _session_locks[session_id] = threading.RLock()
+        return _session_locks[session_id]
 
 
 class SessionNotFoundError(FileNotFoundError):
@@ -80,14 +91,54 @@ class SessionStore:
             return False
 
     def save_ingestao(self, session_id: str, data: dict[str, Any]) -> None:
-        self._write_json(session_id, "ingestao.json", data)
+        with _lock_for(session_id):
+            self._write_json(session_id, "ingestao.json", data)
 
     def load_ingestao(self, session_id: str) -> Optional[dict[str, Any]]:
         path = self._session_dir(session_id) / "ingestao.json"
         if not path.exists():
             return None
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
+        with _lock_for(session_id):
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+
+    def update_consolidado(
+        self,
+        session_id: str,
+        pedido_norm: str,
+        patch: dict[str, Any],
+    ) -> bool:
+        """Atualiza um consolidado dentro de ingestao.json (thread-safe)."""
+        with _lock_for(session_id):
+            ingest = self.load_ingestao(session_id)
+            if not ingest:
+                return False
+
+            found = False
+            for item in ingest.get("consolidados", []):
+                if (
+                    item.get("numero_pedido_norm") == pedido_norm
+                    or item.get("numero_pedido") == pedido_norm
+                ):
+                    item.update(patch)
+                    found = True
+                    break
+
+            if not found:
+                return False
+
+            resumo = ingest.get("resumo", {})
+            if isinstance(resumo, dict):
+                processando = sum(
+                    1
+                    for c in ingest.get("consolidados", [])
+                    if c.get("status_ia") == config.COD_PROCESSANDO_IA
+                )
+                resumo["processando_ia"] = str(processando)
+                ingest["resumo"] = resumo
+
+            self._write_json(session_id, "ingestao.json", ingest)
+            return True
 
     def save_consolidados_validados(self, session_id: str, data: dict[str, Any]) -> None:
         self._write_json(session_id, "consolidados_validados.json", data)

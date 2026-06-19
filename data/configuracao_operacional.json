@@ -1,0 +1,145 @@
+{
+  "_versao": "1",
+  "_descricao": "Single Source of Truth — frota, equipe, rotas e horários",
+  "frota": [
+    {
+      "id": "VAN_MASTER",
+      "placa": "",
+      "nome": "VAN MASTER",
+      "capacidade_kg": 1800.0,
+      "tipo": "BAU",
+      "ativo": false,
+      "reserva": true
+    },
+    {
+      "id": "11.180_BAU_1",
+      "placa": "",
+      "nome": "11.180 - BAÚ",
+      "capacidade_kg": 6000.0,
+      "tipo": "BAU",
+      "ativo": true,
+      "reserva": false
+    },
+    {
+      "id": "11.180_BAU_2",
+      "placa": "",
+      "nome": "11.180 - BAÚ",
+      "capacidade_kg": 6100.0,
+      "tipo": "BAU",
+      "ativo": true,
+      "reserva": false
+    },
+    {
+      "id": "10.160_SYDER",
+      "placa": "",
+      "nome": "10.160 - SYDER",
+      "capacidade_kg": 4700.0,
+      "tipo": "SYDER",
+      "ativo": true,
+      "reserva": false
+    }
+  ],
+  "equipe": {
+    "motoristas": [],
+    "ajudantes": []
+  },
+  "rotas": [
+    {
+      "cidade": "SAO PAULO",
+      "rota_logistica": "ROTA_CAPITAL",
+      "macro_regiao": "GRANDE_SP",
+      "tempo_medio_viagem_min": 240
+    },
+    {
+      "cidade": "DIADEMA",
+      "rota_logistica": "ROTA_ABC",
+      "macro_regiao": "GRANDE_SP",
+      "tempo_medio_viagem_min": 210
+    },
+    {
+      "cidade": "SAO BERNARDO DO CAMPO",
+      "rota_logistica": "ROTA_ABC",
+      "macro_regiao": "GRANDE_SP",
+      "tempo_medio_viagem_min": 210
+    },
+    {
+      "cidade": "SANTO ANDRE",
+      "rota_logistica": "ROTA_ABC",
+      "macro_regiao": "OUTROS",
+      "tempo_medio_viagem_min": 210
+    },
+    {
+      "cidade": "MAUA",
+      "rota_logistica": "ROTA_ABC",
+      "macro_regiao": "GRANDE_SP",
+      "tempo_medio_viagem_min": 210
+    },
+    {
+      "cidade": "GUARULHOS",
+      "rota_logistica": "ROTA_LESTE",
+      "macro_regiao": "GRANDE_SP",
+      "tempo_medio_viagem_min": 210
+    },
+    {
+      "cidade": "CAMPINAS",
+      "rota_logistica": "ROTA_INTERIOR_RMC",
+      "macro_regiao": "INTERIOR_SP",
+      "tempo_medio_viagem_min": 120
+    },
+    {
+      "cidade": "VALINHOS",
+      "rota_logistica": "ROTA_INTERIOR_RMC",
+      "macro_regiao": "INTERIOR_SP",
+      "tempo_medio_viagem_min": 120
+    },
+    {
+      "cidade": "AMERICANA",
+      "rota_logistica": "ROTA_INTERIOR_RMC",
+      "macro_regiao": "INTERIOR_SP",
+      "tempo_medio_viagem_min": 120
+    },
+    {
+      "cidade": "CONTAGEM",
+      "rota_logistica": "ROTA_MG",
+      "macro_regiao": "MG",
+      "tempo_medio_viagem_min": 300
+    },
+    {
+      "cidade": "GARIBALDI",
+      "rota_logistica": "ROTA_SUL",
+      "macro_regiao": "SUL",
+      "tempo_medio_viagem_min": 360
+    }
+  ],
+  "horarios": {
+    "inicio_expediente": "07:00",
+    "limite_retorno": "17:00",
+    "tempo_descarga_minutos": 20,
+    "tempo_almoco_minutos": 60,
+    "jornada_maxima_minutos": 600,
+    "velocidade_media_kmh": 50,
+    "turnos": [
+      {
+        "nome": "Expediente",
+        "saida": "07:00",
+        "fim": "17:00"
+      }
+    ]
+  },
+  "operacao": {
+    "peso_max_spyder_no_bau_kg": 800.0,
+    "permitir_spyder_no_bau": true,
+    "comprimentos_longos_mm": "4800, 5000, 5900, 6000",
+    "rotas_vizinhas": {
+      "ROTA_CAPITAL": "ROTA_ABC, ROTA_LESTE",
+      "ROTA_ABC": "ROTA_CAPITAL, ROTA_LESTE",
+      "ROTA_LESTE": "ROTA_CAPITAL, ROTA_ABC",
+      "ROTA_INTERIOR_RMC": "ROTA_CAPITAL",
+      "ROTA_MG": "ROTA_INTERIOR_RMC",
+      "ROTA_SUL": "ROTA_OUTROS",
+      "ROTA_OUTROS": ""
+    },
+    "motivos_backlog": "FROTA INSUFICIENTE, LIMITE DE JORNADA ATINGIDO, BLOQUEIO FISCAL, TRAVADO COMERCIAL, RETIRA FOB, TERCEIRO",
+    "cadastro_clientes_path": "TESTE.xlsx"
+  }
+}

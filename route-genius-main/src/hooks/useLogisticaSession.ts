@@ -3,6 +3,7 @@ import { useCallback, useRef } from "react";
 
 import {
   confirmarValidacao,
+  anteciparPedido,
   getConsolidados,
   getRoteirizacao,
   ingestSession,
@@ -11,7 +12,7 @@ import {
   roteirizar,
   uploadSession,
 } from "@/lib/api-client";
-import type { ConsolidadoPatch, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
+import type { AnteciparPedidoBody, ConsolidadoPatch, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
 import { COLUMN_BACKLOG } from "@/lib/logistica-types";
 import { optimisticMoveRoteirizacao } from "@/lib/optimistic-move";
 import { SESSION_KEY } from "@/lib/logistica-types";
@@ -32,6 +33,10 @@ export function useLogisticaSession(sessionId: string | null) {
     queryKey: ["consolidados", sessionId],
     queryFn: () => getConsolidados(sessionId!),
     enabled: !!sessionId,
+    refetchInterval: (query) =>
+      query.state.data?.consolidados.some((c) => c.status_ia === "PROCESSANDO_IA")
+        ? 2000
+        : false,
   });
 
   const roteirizacaoQuery = useQuery({
@@ -59,10 +64,12 @@ export function useLogisticaSession(sessionId: string | null) {
     mutationFn: ({
       sid,
       regrasNovas,
+      memoriaNovas,
     }: {
       sid: string;
       regrasNovas?: Record<string, string>;
-    }) => confirmarValidacao(sid, regrasNovas ?? {}),
+      memoriaNovas?: Record<string, string>;
+    }) => confirmarValidacao(sid, regrasNovas ?? {}, memoriaNovas ?? {}),
     onSuccess: (_data, { sid }) => {
       queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
     },
@@ -102,6 +109,15 @@ export function useLogisticaSession(sessionId: string | null) {
     },
   });
 
+  const anteciparMutation = useMutation({
+    mutationFn: ({ sid, body }: { sid: string; body: AnteciparPedidoBody }) =>
+      anteciparPedido(sid, body),
+    onSuccess: (data, { sid }) => {
+      queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
+      queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
+    },
+  });
+
   const debounceTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const patchConsolidadoDebounced = useCallback(
@@ -130,6 +146,7 @@ export function useLogisticaSession(sessionId: string | null) {
     confirmMutation,
     roteirizarMutation,
     moverMutation,
+    anteciparMutation,
     patchConsolidadoDebounced,
   };
 }

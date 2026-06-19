@@ -89,6 +89,22 @@ REGEX_HUB_REDESPACHO = re.compile(
     re.IGNORECASE,
 )
 
+REGEX_PALAVRAS_CHAVE_LOGISTICA = re.compile(
+    r"COLETA|RETIRA|BUSCAR|REDESPACHO|LEVAR\s+NA\s+TRANSPORTADORA|\bFOB\b|\bHUB\b",
+    re.IGNORECASE,
+)
+
+REGEX_PALAVRAS_CHAVE_FRETE = re.compile(
+    r"COLETA|RETIRA|BUSCAR|REDESPACHO|LEVAR\s+NA\s+TRANSPORTADORA|FOB|HUB|FABRICA|FÁBRICA",
+    re.IGNORECASE,
+)
+
+REGEX_PALAVRAS_ADMINISTRATIVAS = re.compile(
+    r"PAGAMENTO|PGTO|BOLETO|BOLETOS|T[IÍ]TULO|T[IÍ]TULOS|DECRETO|"
+    r"HOR[AÁ]RIO|DESCONTO|VENCIMENTO|COBRAN[CÇ]A|FACTORING|F[EÉ]RIAS|DDL|EMAIL",
+    re.IGNORECASE,
+)
+
 
 def _transportadora_superfine(texto_transp: str, codigo_transp: str) -> bool:
     codigo = normalizar_codigo_cliente(codigo_transp)
@@ -96,6 +112,85 @@ def _transportadora_superfine(texto_transp: str, codigo_transp: str) -> bool:
         return True
     transp = normalizar_texto(texto_transp)
     return bool(transp) and transp.startswith("SUPERFINE")
+
+
+def tem_palavras_chave_logisticas(
+    texto_observacao: str,
+    texto_descricao: str = "",
+) -> bool:
+    """Indica se há palavras-chave logísticas explícitas no texto."""
+    texto = f"{normalizar_texto(texto_observacao)} {normalizar_texto(texto_descricao)}"
+    return bool(texto.strip() and REGEX_PALAVRAS_CHAVE_LOGISTICA.search(texto))
+
+
+def observacao_apenas_administrativa(
+    texto_observacao: str,
+    texto_descricao: str = "",
+) -> bool:
+    """
+    True quando a observação é puramente administrativa (pagamento, boleto, etc.)
+    sem instrução logística forte — candidata a pular a IA.
+    """
+    obs = normalizar_texto(texto_observacao)
+    desc = normalizar_texto(texto_descricao)
+    texto = f"{obs} {desc}".strip()
+    if not texto:
+        return False
+    if not REGEX_PALAVRAS_ADMINISTRATIVAS.search(texto):
+        return False
+    if tem_palavras_chave_logisticas(texto_observacao, texto_descricao):
+        return False
+    texto_intencao = f"{obs} {desc}"
+    if REGEX_RETIRA_FOB.search(texto_intencao) or REGEX_HUB_REDESPACHO.search(texto_intencao):
+        return False
+    return True
+
+
+def tipo_frete_padrao_superfine(
+    texto_transp: str,
+    codigo_transp: str,
+    tipo_frete_atual: str,
+) -> str:
+    """LIBERADO / frota própria quando transportadora Superfine; senão mantém regex."""
+    if _transportadora_superfine(texto_transp, codigo_transp):
+        return "ENTREGA_DIRETA"
+    return tipo_frete_atual
+
+
+def classificar_frete_com_confianca(
+    texto_observacao: str,
+    texto_transp: str,
+    texto_descricao: str = "",
+    codigo_transp: str = "",
+) -> tuple[str, bool]:
+    """
+    Classifica intenção logística via regex.
+
+    Retorna (tipo_frete, confianca_alta). confianca_alta=False indica fallback
+    ambíguo (ex.: ENTREGA_TERCEIRO genérico sem palavra-chave).
+    """
+    try:
+        obs = normalizar_texto(texto_observacao)
+        desc = normalizar_texto(texto_descricao)
+        texto_intencao = f"{obs} {desc}"
+
+        if REGEX_RETIRA_FOB.search(texto_intencao):
+            return "RETIRA_FOB", True
+
+        if REGEX_HUB_REDESPACHO.search(texto_intencao):
+            if not _transportadora_superfine(texto_transp, codigo_transp):
+                return "ENTREGA_TERCEIRO_HUB", True
+            return "ENTREGA_DIRETA", True
+
+        if _transportadora_superfine(texto_transp, codigo_transp):
+            return "ENTREGA_DIRETA", True
+
+        if tem_palavras_chave_logisticas(texto_observacao, texto_descricao):
+            return "ENTREGA_TERCEIRO", True
+
+        return "ENTREGA_TERCEIRO", False
+    except Exception:
+        return "ENTREGA_TERCEIRO", False
 
 
 def classificar_frete(
@@ -109,25 +204,10 @@ def classificar_frete(
 
     Prioridade: RETIRA_FOB > ENTREGA_TERCEIRO_HUB > SUPERFINE > TERCEIRO.
     """
-    try:
-        obs = normalizar_texto(texto_observacao)
-        desc = normalizar_texto(texto_descricao)
-        texto_intencao = f"{obs} {desc}"
-
-        if REGEX_RETIRA_FOB.search(texto_intencao):
-            return "RETIRA_FOB"
-
-        if REGEX_HUB_REDESPACHO.search(texto_intencao):
-            if not _transportadora_superfine(texto_transp, codigo_transp):
-                return "ENTREGA_TERCEIRO_HUB"
-            return "ENTREGA_DIRETA"
-
-        if _transportadora_superfine(texto_transp, codigo_transp):
-            return "ENTREGA_DIRETA"
-
-        return "ENTREGA_TERCEIRO"
-    except Exception:
-        return "ENTREGA_TERCEIRO"
+    tipo, _ = classificar_frete_com_confianca(
+        texto_observacao, texto_transp, texto_descricao, codigo_transp
+    )
+    return tipo
 
 
 class ExtratorPDF:

@@ -18,7 +18,7 @@ export const Route = createFileRoute("/roteirizar")({
 
 function RoteirizarPage() {
   const sessionId = getStoredSessionId();
-  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, moverMutation } =
+  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, moverMutation, anteciparMutation } =
     useLogisticaSession(sessionId);
   const [lastWarning, setLastWarning] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -52,7 +52,8 @@ function RoteirizarPage() {
   const loading =
     roteirizacaoQuery.isLoading ||
     roteirizarMutation.isPending ||
-    moverMutation.isPending;
+    moverMutation.isPending ||
+    anteciparMutation.isPending;
 
   const data = roteirizacaoQuery.data ?? roteirizarMutation.data;
 
@@ -74,6 +75,14 @@ function RoteirizarPage() {
     } finally {
       setExporting(false);
     }
+  };
+
+  const handleAntecipar = async (payload: {
+    numero_pedido: string;
+    motivo_adiantamento: string;
+    representante_autorizou: string;
+  }) => {
+    await anteciparMutation.mutateAsync({ sid: sessionId, body: payload });
   };
 
   return (
@@ -129,8 +138,9 @@ function RoteirizarPage() {
       {data && (
         <RouteKanbanBoard
           data={data}
-          loading={moverMutation.isPending}
+          loading={moverMutation.isPending || anteciparMutation.isPending}
           onMove={handleMove}
+          onAntecipar={handleAntecipar}
           warning={lastWarning}
           consolidadosByPedido={consolidadosByPedido}
         />

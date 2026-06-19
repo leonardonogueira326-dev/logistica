@@ -13,7 +13,15 @@ from extrator_clientes import obter_lookup_clientes
 from extrator_email import ExtratorEmail, buscar_xlsb_na_pasta
 from extrator_excel import ExtratorExcel
 from aprendizado_regras import consultar_aprendizado
-from extrator_pdf import ExtratorPDF, classificar_frete
+from extrator_pdf import (
+    ExtratorPDF,
+    classificar_frete,
+    classificar_frete_com_confianca,
+    observacao_apenas_administrativa,
+    tem_palavras_chave_logisticas,
+    tipo_frete_padrao_superfine,
+)
+from memoria_operacional import consultar_memoria
 from models import (
     EventoEmail,
     PedidoConsolidado,
@@ -30,6 +38,15 @@ from normalizador import (
 )
 from param_manager import carregar_parametros
 from quarentena import avaliar_quarentena
+from historico_manager import hash_pedido, pedido_existe_no_historico
+
+
+TIPO_FRETE_PARA_STATUS: dict[str, str] = {
+    "RETIRA_FOB": config.COD_RETIRA_FOB,
+    "ENTREGA_TERCEIRO_HUB": config.COD_TERCEIRO_HUB,
+    "ENTREGA_DIRETA": config.COD_LIBERADO,
+    "ENTREGA_TERCEIRO": config.COD_TERCEIRO,
+}
 
 
 class MotorIngestao:
@@ -168,7 +185,15 @@ class MotorIngestao:
             self.avisos.append(f"Enriquecimento {pedido.numero_pedido}: {exc}")
 
     def _aplicar_classificacao_frete(self, pedido: PedidoFaturamento) -> None:
-        """Aprendizado local tem prioridade sobre regex estática."""
+        """
+        Hierarquia: aprendizado_regras -> memoria_operacional -> regex -> fila IA.
+        LLM não é chamada aqui (processada em background via api/ia_worker).
+        """
+        pedido.flag_revisao_llm = "NAO"
+        pedido.sugestao_llm_status = ""
+        pedido.status_ia = config.STATUS_IA_NAO_APLICAVEL
+        pedido.tipo_frete_regex = ""
+
         try:
             aprendido = consultar_aprendizado(
                 pedido.cliente_codigo,
@@ -185,13 +210,58 @@ class MotorIngestao:
                 )
                 return
 
-            pedido.tipo_frete = classificar_frete(
+            memoria = consultar_memoria(
+                pedido.observacao_comercial,
+                pedido.descricao_item,
+            )
+            if memoria:
+                status_mem, tipo_frete = memoria
+                pedido.tipo_frete = tipo_frete
+                pedido.aprendizado_aplicado = "NAO"
+                self.avisos.append(
+                    f"Memória operacional {pedido.numero_pedido}: -> {status_mem}"
+                )
+                return
+
+            tipo_regex, confianca_alta = classificar_frete_com_confianca(
                 pedido.observacao_comercial,
                 pedido.transportadora,
                 pedido.descricao_item,
                 pedido.transportadora_codigo,
             )
+            pedido.tipo_frete = tipo_regex
+            pedido.tipo_frete_regex = tipo_regex
             pedido.aprendizado_aplicado = "NAO"
+
+            texto_obs = (pedido.observacao_comercial or pedido.descricao_item or "").strip()
+            tem_chaves = tem_palavras_chave_logisticas(
+                pedido.observacao_comercial,
+                pedido.descricao_item,
+            )
+
+            if observacao_apenas_administrativa(
+                pedido.observacao_comercial,
+                pedido.descricao_item,
+            ):
+                pedido.tipo_frete = tipo_frete_padrao_superfine(
+                    pedido.transportadora,
+                    pedido.transportadora_codigo,
+                    tipo_regex,
+                )
+                pedido.status_ia = config.STATUS_IA_NAO_APLICAVEL
+                self.avisos.append(
+                    f"Obs. administrativa {pedido.numero_pedido}: IA ignorada -> "
+                    f"{pedido.tipo_frete}"
+                )
+                return
+
+            deve_consultar_llm = bool(texto_obs) and (not confianca_alta or not tem_chaves)
+
+            if deve_consultar_llm:
+                pedido.status_ia = config.COD_PROCESSANDO_IA
+            else:
+                pedido.status_ia = config.STATUS_IA_NAO_APLICAVEL
+
         except Exception as exc:
             self.avisos.append(f"Classificação frete {pedido.numero_pedido}: {exc}")
             pedido.tipo_frete = classificar_frete(
@@ -200,6 +270,8 @@ class MotorIngestao:
                 pedido.descricao_item,
                 pedido.transportadora_codigo,
             )
+            pedido.tipo_frete_regex = pedido.tipo_frete
+            pedido.status_ia = config.STATUS_IA_NAO_APLICAVEL
 
     def _buscar_arquivo(self, extensao: str) -> str:
         try:
@@ -217,6 +289,17 @@ class MotorIngestao:
 
         for pedido in self.pedidos_pdf:
             try:
+                h_id = hash_pedido(pedido.numero_pedido_norm or pedido.numero_pedido, pedido.cliente_codigo)
+                if pedido_existe_no_historico(pedido.numero_pedido_norm or pedido.numero_pedido, pedido.cliente_codigo):
+                    self.avisos.append(
+                        f"Pedido {pedido.numero_pedido} ignorado — já consta no histórico ({h_id})"
+                    )
+                    continue
+
+                chave_cli = normalizar_codigo_cliente(pedido.cliente_codigo) if pedido.cliente_codigo else ""
+                mestre = self._lookup_clientes.get(chave_cli) if chave_cli else None
+                aceita_ant = mestre.get("aceita_antecipacao", "SIM") if mestre else "SIM"
+
                 item = PedidoConsolidado(
                     numero_pedido=pedido.numero_pedido,
                     numero_pedido_norm=pedido.numero_pedido_norm,
@@ -242,6 +325,13 @@ class MotorIngestao:
                     fontes="PDF",
                     observacao_comercial=pedido.observacao_comercial or pedido.descricao_item,
                     data_producao=pedido.data_producao,
+                    status_ia=pedido.status_ia,
+                    tipo_frete_regex=pedido.tipo_frete_regex or pedido.tipo_frete,
+                    flag_revisao_llm=pedido.flag_revisao_llm,
+                    sugestao_llm_status=pedido.sugestao_llm_status,
+                    hash_id=h_id,
+                    fonte_entrada="PDF",
+                    aceita_antecipacao=aceita_ant,
                 )
 
                 status, motivo, auditoria = self._classificar_pedido(
@@ -260,6 +350,14 @@ class MotorIngestao:
                     pedido.descricao_item,
                     pedido.aprendizado_aplicado,
                 )
+                item.flag_revisao_llm = pedido.flag_revisao_llm
+                item.sugestao_llm_status = pedido.sugestao_llm_status
+                if pedido.flag_revisao_llm == "SIM":
+                    revisao = config.COD_REVISAO_OBRIGATORIA
+                    motivo_ia = "Classificação sugerida pela IA"
+                    if pedido.sugestao_llm_status:
+                        motivo_ia = f"{motivo_ia}: {pedido.sugestao_llm_status}"
+                    motivo_q = f"{motivo_q} | {motivo_ia}".strip(" |") if motivo_q else motivo_ia
                 item.revisao_obrigatoria = revisao
                 item.motivo_quarentena = motivo_q
                 item.palavra_chave_quarentena = palavra_q
@@ -388,6 +486,9 @@ class MotorIngestao:
             for c in self.consolidados
             if c.revisao_obrigatoria == config.COD_REVISAO_OBRIGATORIA
         )
+        processando_ia = sum(
+            1 for c in self.consolidados if c.status_ia == config.COD_PROCESSANDO_IA
+        )
         enriquecidos = sum(
             1 for p in self.pedidos_pdf if p.enriquecido_mestre == "SIM"
         )
@@ -406,9 +507,13 @@ class MotorIngestao:
             "terceiros": str(terceiros),
             "terceiros_hub": str(terceiros_hub),
             "revisao_obrigatoria": str(revisoes),
+            "processando_ia": str(processando_ia),
             "avisos": " | ".join(self.avisos) or "NENHUM",
             "erros": " | ".join(self.erros) or "NENHUM",
         }
+
+    def tem_pendentes_ia(self) -> bool:
+        return any(c.status_ia == config.COD_PROCESSANDO_IA for c in self.consolidados)
 
     def para_dict(self) -> dict:
         return {

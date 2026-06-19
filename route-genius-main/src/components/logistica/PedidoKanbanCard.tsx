@@ -1,12 +1,13 @@
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, MoreHorizontal } from "lucide-react";
+import { Crosshair, GripVertical, MoreHorizontal } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { ItemRota } from "@/lib/logistica-types";
@@ -18,12 +19,21 @@ export function getCardId(p: CardPedido) {
   return String(p.numero_pedido ?? "");
 }
 
+function formatDataBadge(iso: string): string {
+  if (!iso) return "";
+  const parts = iso.split("-");
+  if (parts.length === 3) return `${parts[2]}/${parts[1]}`;
+  return iso;
+}
+
 export function PedidoKanbanCard({
   pedido,
   columnId,
   destinos,
   onMoveTo,
   onOpenAudit,
+  onAntecipar,
+  variant = "default",
   dragging,
 }: {
   pedido: CardPedido;
@@ -31,17 +41,18 @@ export function PedidoKanbanCard({
   destinos: { id: string; label: string }[];
   onMoveTo: (destino: string) => void;
   onOpenAudit?: (numeroPedido: string) => void;
+  onAntecipar?: (numeroPedido: string) => void;
+  variant?: "default" | "futuro";
   dragging?: boolean;
 }) {
   const id = getCardId(pedido);
+  const raw = pedido as Record<string, string>;
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `${columnId}::${id}`,
     data: { pedido, columnId, numeroPedido: id },
   });
 
-  const style = transform
-    ? { transform: CSS.Translate.toString(transform) }
-    : undefined;
+  const style = transform ? { transform: CSS.Translate.toString(transform) } : undefined;
 
   const cliente = String(pedido.cliente ?? "");
   const bairro = String(pedido.bairro_destino ?? "");
@@ -49,13 +60,20 @@ export function PedidoKanbanCard({
   const peso = Number(pedido.peso_kg ?? 0);
   const isSpyder = pedido.is_spyder === "SIM";
   const isLonga = pedido.is_dimensao_longa === "SIM";
+  const dataPrev = raw.data_prevista_recebimento ?? "";
+  const oportunidade = raw.oportunidade === "SIM";
+  const oportunidadeDica = raw.oportunidade_dica ?? "";
+  const isFuturo = variant === "futuro";
 
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={cn(
-        "rounded-lg border border-border bg-card shadow-sm text-sm transition-shadow hover:shadow-md",
+        "rounded-lg border shadow-sm text-sm transition-shadow hover:shadow-md",
+        isFuturo
+          ? "border-muted-foreground/25 bg-muted/40 opacity-90"
+          : "border-border bg-card",
         (isDragging || dragging) && "opacity-50 ring-2 ring-accent",
       )}
     >
@@ -75,12 +93,25 @@ export function PedidoKanbanCard({
           className="flex-1 min-w-0 text-left"
           onClick={() => onOpenAudit?.(id)}
         >
-          <div className="font-medium truncate">{cliente}</div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="font-medium truncate">{cliente}</div>
+            {isFuturo && dataPrev && (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-5 font-normal">
+                Data: {formatDataBadge(dataPrev)}
+              </Badge>
+            )}
+          </div>
           <div className="text-xs text-muted-foreground truncate mt-0.5">
             {bairro}
             {bairro && cidade ? ", " : ""}
             {cidade}
           </div>
+          {oportunidade && oportunidadeDica && (
+            <div className="mt-2 flex items-start gap-1.5 text-[11px] text-accent bg-accent/10 border border-accent/30 rounded px-2 py-1">
+              <Crosshair className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>{oportunidadeDica}</span>
+            </div>
+          )}
           <div className="mt-2 flex items-end justify-between gap-2">
             <div className="flex flex-wrap gap-1">
               {isSpyder && (
@@ -91,6 +122,11 @@ export function PedidoKanbanCard({
               {isLonga && (
                 <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-5">
                   LONGA
+                </Badge>
+              )}
+              {isFuturo && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 text-muted-foreground">
+                  Backlog Futuro
                 </Badge>
               )}
             </div>
@@ -111,6 +147,14 @@ export function PedidoKanbanCard({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            {isFuturo && onAntecipar && (
+              <>
+                <DropdownMenuItem onClick={() => onAntecipar(id)}>
+                  Antecipar Entrega / Adicionar à Rota
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
             <DropdownMenuItem onClick={() => onOpenAudit?.(id)}>
               Ver auditoria
             </DropdownMenuItem>

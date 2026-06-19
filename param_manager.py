@@ -67,7 +67,14 @@ def _seed_params() -> dict[str, Any]:
 
 
 def carregar_parametros(caminho: str = "") -> dict[str, Any]:
-    """Carrega parâmetros do JSON ou cria seed."""
+    """Carrega parâmetros — prioriza data/configuracao_operacional.json."""
+    try:
+        from config_operacional import carregar_configuracao, configuracao_para_parametros
+
+        return configuracao_para_parametros(carregar_configuracao(recarregar=True))
+    except Exception:
+        pass
+
     path = Path(caminho) if caminho else _ARQUIVO_PADRAO
     try:
         if path.exists():

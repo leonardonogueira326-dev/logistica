@@ -1,5 +1,6 @@
 import {
   COLUMN_BACKLOG,
+  COLUMN_BACKLOG_FUTURO,
   COLUMN_COLETAS,
   type ItemRota,
   type Roteirizacao,
@@ -9,6 +10,7 @@ function findPedidoLocation(data: Roteirizacao, numeroPedido: string): string | 
   for (const [vid, itens] of Object.entries(data.itens_por_veiculo)) {
     if (itens.some((i) => i.numero_pedido === numeroPedido)) return vid;
   }
+  if ((data.backlog_futuro ?? []).some((b) => b.numero_pedido === numeroPedido)) return COLUMN_BACKLOG_FUTURO;
   if (data.backlog.some((b) => b.numero_pedido === numeroPedido)) return COLUMN_BACKLOG;
   if ((data.coletas ?? []).some((c) => c.numero_pedido === numeroPedido)) return COLUMN_COLETAS;
   return null;
@@ -19,6 +21,10 @@ function extractPedido(
   origem: string,
   numeroPedido: string,
 ): ItemRota | Record<string, string> | null {
+  if (origem === COLUMN_BACKLOG_FUTURO) {
+    const b = (data.backlog_futuro ?? []).find((x) => x.numero_pedido === numeroPedido);
+    return b ?? null;
+  }
   if (origem === COLUMN_BACKLOG) {
     const b = data.backlog.find((x) => x.numero_pedido === numeroPedido);
     return b ?? null;
@@ -69,13 +75,16 @@ export function optimisticMoveRoteirizacao(
     ...data,
     itens_por_veiculo: { ...data.itens_por_veiculo },
     backlog: [...data.backlog],
+    backlog_futuro: [...(data.backlog_futuro ?? [])],
     coletas: [...(data.coletas ?? [])],
   };
 
-  if (origem !== COLUMN_BACKLOG && origem !== COLUMN_COLETAS) {
+  if (origem !== COLUMN_BACKLOG && origem !== COLUMN_BACKLOG_FUTURO && origem !== COLUMN_COLETAS) {
     next.itens_por_veiculo[origem] = (next.itens_por_veiculo[origem] ?? []).filter(
       (i) => i.numero_pedido !== numeroPedido,
     );
+  } else if (origem === COLUMN_BACKLOG_FUTURO) {
+    next.backlog_futuro = next.backlog_futuro.filter((b) => b.numero_pedido !== numeroPedido);
   } else if (origem === COLUMN_BACKLOG) {
     next.backlog = next.backlog.filter((b) => b.numero_pedido !== numeroPedido);
   } else {
@@ -83,8 +92,21 @@ export function optimisticMoveRoteirizacao(
   }
 
   const item = toItemRota(pedido);
+  const raw = pedido as Record<string, string>;
 
-  if (destino === COLUMN_BACKLOG) {
+  if (destino === COLUMN_BACKLOG_FUTURO) {
+    next.backlog_futuro.push({
+      numero_pedido: item.numero_pedido,
+      cliente: item.cliente,
+      representante: item.representante,
+      cidade_destino: item.cidade_destino,
+      rota_logistica: item.rota_logistica,
+      peso_kg: String(item.peso_kg),
+      motivo: motivo ?? "RECEBIMENTO POSTERGADO",
+      data_prevista_recebimento: raw.data_prevista_recebimento ?? "",
+      tipo_backlog: COLUMN_BACKLOG_FUTURO,
+    });
+  } else if (destino === COLUMN_BACKLOG) {
     next.backlog.push({
       numero_pedido: item.numero_pedido,
       cliente: item.cliente,

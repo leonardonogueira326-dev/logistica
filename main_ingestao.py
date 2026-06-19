@@ -15,6 +15,7 @@ from pathlib import Path
 
 from gerador_debug import gerar_debug_excel
 from motor_ingestao import MotorIngestao
+from api.ia_worker import processar_fila_llm_inline
 
 
 def main() -> None:
@@ -37,6 +38,12 @@ def main() -> None:
         caminho_msg=args.msg,
     )
 
+    if motor.tem_pendentes_ia():
+        print("Processando fila IA (modo CLI síncrono)...")
+        n = processar_fila_llm_inline(motor)
+        print(f"  {n} pedido(s) processados pela IA.")
+        consolidados = motor.consolidados
+
     data_hoje = date.today().isoformat()
     json_path = pasta / f"ingestao_{data_hoje}.json"
     xlsx_path = pasta / "DEBUG_INGESTAO.xlsx"
@@ -58,9 +65,10 @@ def main() -> None:
     print("=" * 60)
 
     for item in consolidados:
+        ia_tag = f" [IA:{item.status_ia}]" if item.status_ia not in ("NAO_APLICAVEL", "") else ""
         print(
             f"  {item.numero_pedido} | {item.cliente[:30]} | "
-            f"{item.status} | {item.motivo_alocacao[:50]}"
+            f"{item.status}{ia_tag} | {item.motivo_alocacao[:50]}"
         )
 
 

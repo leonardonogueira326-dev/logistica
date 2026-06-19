@@ -8,7 +8,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Truck, Inbox, PackageSearch, Loader2, AlertTriangle } from "lucide-react";
+import { Truck, Inbox, PackageSearch, Loader2, AlertTriangle, CalendarClock } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { PedidoAuditSheet } from "@/components/logistica/PedidoAuditSheet";
@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/select";
 import {
   COLUMN_BACKLOG,
+  COLUMN_BACKLOG_FUTURO,
   COLUMN_COLETAS,
   MOTIVOS_BACKLOG,
   type Roteirizacao,
@@ -48,6 +49,7 @@ export function RouteKanbanBoard({
   data,
   loading,
   onMove,
+  onAntecipar,
   warning,
   consolidadosByPedido = {},
 }: {
@@ -59,6 +61,11 @@ export function RouteKanbanBoard({
     motivo?: string;
     forcar?: boolean;
   }) => Promise<void>;
+  onAntecipar?: (payload: {
+    numero_pedido: string;
+    motivo_adiantamento: string;
+    representante_autorizou: string;
+  }) => Promise<void>;
   warning?: string;
   consolidadosByPedido?: Record<string, PedidoConsolidado>;
 }) {
@@ -68,6 +75,49 @@ export function RouteKanbanBoard({
   const [forceModal, setForceModal] = useState<PendingMove | null>(null);
   const [forceMessage, setForceMessage] = useState("");
   const [auditPedidoId, setAuditPedidoId] = useState<string | null>(null);
+  const [anteciparModal, setAnteciparModal] = useState<string | null>(null);
+  const [motivoAdiantamento, setMotivoAdiantamento] = useState("");
+  const [repAutorizou, setRepAutorizou] = useState("");
+  const [antecipando, setAntecipando] = useState(false);
+
+  const jornadaMax = data.jornada_maxima_minutos || 600;
+
+  const columns = useMemo(() => {
+    const vehicleCols = data.rotas.map((r) => ({
+      id: r.veiculo_id,
+      label: r.veiculo_nome,
+      rota: r,
+      icon: Truck,
+      variant: "default" as const,
+    }));
+    return [
+      ...vehicleCols,
+      {
+        id: COLUMN_BACKLOG_FUTURO,
+        label: "Backlog Futuro",
+        rota: null,
+        icon: CalendarClock,
+        variant: "futuro" as const,
+      },
+      { id: COLUMN_BACKLOG, label: "Fila de Espera", rota: null, icon: Inbox, variant: "default" as const },
+      { id: COLUMN_COLETAS, label: "Coletas", rota: null, icon: PackageSearch, variant: "default" as const },
+    ];
+  }, [data.rotas]);
+
+  const destinos = columns.map((c) => ({ id: c.id, label: c.label }));
+
+  const itemsByColumn = useMemo(() => {
+    const map: Record<string, CardPedido[]> = {};
+    for (const col of columns) map[col.id] = [];
+
+    for (const r of data.rotas) {
+      map[r.veiculo_id] = [...(data.itens_por_veiculo[r.veiculo_id] ?? [])];
+    }
+    map[COLUMN_BACKLOG_FUTURO] = [...(data.backlog_futuro ?? [])];
+    map[COLUMN_BACKLOG] = [...data.backlog];
+    map[COLUMN_COLETAS] = [...(data.coletas ?? [])];
+    return map;
+  }, [columns, data]);
 
   const auditPedido = useMemo((): PedidoConsolidado | null => {
     if (!auditPedidoId) return null;
@@ -112,40 +162,6 @@ export function RouteKanbanBoard({
     return null;
   }, [auditPedidoId, consolidadosByPedido, itemsByColumn]);
 
-  const jornadaMax = data.jornada_maxima_minutos || 600;
-
-  const columns = useMemo(() => {
-    const vehicleCols = data.rotas.map((r) => ({
-      id: r.veiculo_id,
-      label: r.veiculo_nome,
-      rota: r,
-      icon: Truck,
-    }));
-    return [
-      ...vehicleCols,
-      { id: COLUMN_BACKLOG, label: "Fila de Espera", rota: null, icon: Inbox },
-      { id: COLUMN_COLETAS, label: "Coletas", rota: null, icon: PackageSearch },
-    ];
-  }, [data.rotas]);
-
-  const destinos = columns.map((c) => ({ id: c.id, label: c.label }));
-
-  const itemsByColumn = useMemo(() => {
-    const map: Record<string, CardPedido[]> = {};
-    for (const col of columns) map[col.id] = [];
-
-    for (const r of data.rotas) {
-      map[r.veiculo_id] = [...(data.itens_por_veiculo[r.veiculo_id] ?? [])];
-    }
-    map[COLUMN_BACKLOG] = [...data.backlog];
-    map[COLUMN_COLETAS] = [...(data.coletas ?? [])];
-    return map;
-  }, [columns, data]);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-  );
-
   const executeMove = async (move: PendingMove & { motivo?: string }) => {
     try {
       await onMove({
@@ -176,6 +192,27 @@ export function RouteKanbanBoard({
     }
     void executeMove({ numeroPedido, origem, destino });
   };
+
+  const confirmarAntecipacao = async () => {
+    if (!anteciparModal || !onAntecipar || !motivoAdiantamento.trim()) return;
+    setAntecipando(true);
+    try {
+      await onAntecipar({
+        numero_pedido: anteciparModal,
+        motivo_adiantamento: motivoAdiantamento.trim(),
+        representante_autorizou: repAutorizou.trim(),
+      });
+      setAnteciparModal(null);
+      setMotivoAdiantamento("");
+      setRepAutorizou("");
+    } finally {
+      setAntecipando(false);
+    }
+  };
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
 
   const handleDragStart = (event: DragStartEvent) => {
     const payload = event.active.data.current as { pedido: CardPedido } | undefined;
@@ -228,10 +265,12 @@ export function RouteKanbanBoard({
               jornadaMax={jornadaMax}
               items={itemsByColumn[col.id] ?? []}
               destinos={destinos}
+              variant={col.variant}
               onMoveTo={(destino, pedido) =>
                 requestMove(getCardId(pedido), col.id, destino)
               }
               onOpenAudit={setAuditPedidoId}
+              onAntecipar={col.variant === "futuro" ? setAnteciparModal : undefined}
             />
           ))}
         </div>
@@ -320,6 +359,52 @@ export function RouteKanbanBoard({
         </DialogContent>
       </Dialog>
 
+      <Dialog open={!!anteciparModal} onOpenChange={(o) => !o && setAnteciparModal(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Antecipar Entrega</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Pedido <strong>{anteciparModal}</strong> entrará na fila de alocação de hoje.
+          </p>
+          <label className="block text-sm">
+            <span className="text-xs font-medium text-muted-foreground">Motivo do adiantamento *</span>
+            <textarea
+              className="mt-1 w-full min-h-[72px] px-3 py-2 text-sm rounded-md border border-input bg-background"
+              value={motivoAdiantamento}
+              onChange={(e) => setMotivoAdiantamento(e.target.value)}
+              placeholder="Ex.: cliente confirmou recebimento antecipado"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="text-xs font-medium text-muted-foreground">Representante que autorizou</span>
+            <input
+              className="mt-1 w-full px-3 py-2 text-sm rounded-md border border-input bg-background"
+              value={repAutorizou}
+              onChange={(e) => setRepAutorizou(e.target.value)}
+              placeholder="Nome do representante"
+            />
+          </label>
+          <DialogFooter>
+            <button
+              type="button"
+              className="px-4 py-2 text-sm rounded-md border"
+              onClick={() => setAnteciparModal(null)}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={!motivoAdiantamento.trim() || antecipando}
+              className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground disabled:opacity-50"
+              onClick={() => void confirmarAntecipacao()}
+            >
+              {antecipando ? "Confirmando…" : "Confirmar antecipação"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <PedidoAuditSheet
         pedido={auditPedido}
         open={!!auditPedidoId}
@@ -337,8 +422,10 @@ function KanbanColumn({
   jornadaMax,
   items,
   destinos,
+  variant = "default",
   onMoveTo,
   onOpenAudit,
+  onAntecipar,
 }: {
   id: string;
   title: string;
@@ -347,8 +434,10 @@ function KanbanColumn({
   jornadaMax: number;
   items: CardPedido[];
   destinos: { id: string; label: string }[];
+  variant?: "default" | "futuro";
   onMoveTo: (destino: string, pedido: CardPedido) => void;
   onOpenAudit: (numeroPedido: string) => void;
+  onAntecipar?: (numeroPedido: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id, data: { columnId: id } });
 
@@ -356,16 +445,27 @@ function KanbanColumn({
     <div
       ref={setNodeRef}
       className={cn(
-        "flex w-[300px] shrink-0 flex-col rounded-xl border border-border bg-muted/20",
+        "flex w-[300px] shrink-0 flex-col rounded-xl border",
+        variant === "futuro"
+          ? "border-muted-foreground/30 bg-muted/15"
+          : "border-border bg-muted/20",
         isOver && "ring-2 ring-accent bg-accent/5",
       )}
     >
-      <div className="px-3 py-3 border-b border-border bg-card rounded-t-xl">
+      <div className={cn(
+        "px-3 py-3 border-b border-border rounded-t-xl",
+        variant === "futuro" ? "bg-muted/50" : "bg-card",
+      )}>
         <div className="flex items-center gap-2">
-          <Icon className="w-4 h-4 text-accent" />
+          <Icon className={cn("w-4 h-4", variant === "futuro" ? "text-muted-foreground" : "text-accent")} />
           <div className="font-semibold text-sm truncate">{title}</div>
           <span className="ml-auto text-xs text-muted-foreground">{items.length}</span>
         </div>
+        {variant === "futuro" && (
+          <div className="mt-1 text-[11px] text-muted-foreground">
+            Pedidos com recebimento futuro — visíveis para decisão
+          </div>
+        )}
         {rota && (
           <>
             <div className="mt-1 text-[11px] text-muted-foreground">
@@ -382,8 +482,10 @@ function KanbanColumn({
             pedido={pedido}
             columnId={id}
             destinos={destinos}
+            variant={variant}
             onMoveTo={(dest) => onMoveTo(dest, pedido)}
             onOpenAudit={onOpenAudit}
+            onAntecipar={onAntecipar}
           />
         ))}
         {items.length === 0 && (
