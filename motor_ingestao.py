@@ -6,6 +6,7 @@ Enriquece pedidos com cadastro mestre de clientes (Ref. 8).
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import date
 from pathlib import Path
 
 import config
@@ -43,6 +44,8 @@ from normalizador import (
     resolver_rota_logistica,
 )
 from param_manager import carregar_parametros
+from dias_uteis import dias_uteis_ate, parse_data_br
+from representantes import carregar_representantes, limpar_representante_pdf, localizar_base
 from quarentena import avaliar_quarentena
 from historico_manager import hash_pedido, linha_ja_arquivada, programado_anteriormente
 
@@ -73,6 +76,7 @@ class MotorIngestao:
         self.eventos_email: list[EventoEmail] = []
         self.consolidados: list[PedidoConsolidado] = []
         self.params = carregar_parametros()
+        self._representantes: dict[str, dict[str, str]] | None = None
         self._lookup_clientes = obter_lookup_clientes(str(self.pasta_dados))
         self._cadastro_geo = carregar_cadastro_geolocalizado()
         self._caminho_cadastro_mestre = str(resolver_arquivo_cadastro(str(self.pasta_dados)) or "")
@@ -445,11 +449,55 @@ class MotorIngestao:
                         f"{item.auditoria} | {config.COD_REVISAO_OBRIGATORIA}: {motivo_q}"
                     ).strip(" |")
 
+                self._aplicar_representante(item, pedido)
+                self._aplicar_regra_consulta(item, pedido)
                 consolidados.append(item)
             except Exception as exc:
                 self.erros.append(f"Consolidação {pedido.numero_pedido}: {exc}")
 
         return consolidados
+
+    def _aplicar_representante(self, item: PedidoConsolidado, pedido: PedidoFaturamento) -> None:
+        """Base de clientes da empresa é a fonte; o PDF só serve de reserva."""
+        if self._representantes is None:
+            self._representantes = carregar_representantes(localizar_base([self.pasta_dados]))
+            if self._representantes:
+                self.avisos.append(f"Representantes: base de clientes com {len(self._representantes)} clientes")
+        da_base = self._representantes.get(normalizar_codigo_cliente(pedido.cliente_codigo))
+        do_pdf = limpar_representante_pdf(pedido.representante)
+        if da_base:
+            item.representante = da_base["representante"]
+            item.representante_codigo = da_base["representante_codigo"]
+        elif do_pdf and do_pdf != "NÃO IDENTIFICADO":
+            item.representante = do_pdf
+        else:
+            item.representante = "NÃO IDENTIFICADO"
+
+    def _aplicar_regra_consulta(self, item: PedidoConsolidado, pedido: PedidoFaturamento) -> None:
+        """
+        Dt. Produção a N dias úteis (padrão 3) ou mais da data do PDF: o material
+        pode estar pronto, mas só sai com OK do representante. Até lá a linha
+        fica em "Consultar representante" (backlog futuro), não entra na rota.
+        """
+        referencia = parse_data_br(pedido.data_faturamento) or date.today()
+        item.data_referencia = referencia.isoformat()
+        producao = parse_data_br(pedido.data_producao)
+        if not producao:
+            return
+        extras = self.params.get("feriados_extras", [])
+        item.dias_uteis_antecedencia = dias_uteis_ate(referencia, producao, extras)
+        limite = int(self.params.get("antecedencia_consulta_dias_uteis", 3))
+        if item.dias_uteis_antecedencia < limite:
+            return
+        if item.status in (config.COD_BLOQUEIO_FISCAL,):
+            return
+        item.consulta_representante = "PENDENTE"
+        if not item.data_prevista_recebimento:
+            item.data_prevista_recebimento = producao.isoformat()
+        item.motivo_atraso = (
+            f"Consultar representante: Dt. Produção {producao.strftime('%d/%m/%Y')} "
+            f"({item.dias_uteis_antecedencia} dias úteis)"
+        )
 
     def _indexar_retencoes(self) -> dict[str, RetencaoFiscal]:
         mapa: dict[str, RetencaoFiscal] = {}

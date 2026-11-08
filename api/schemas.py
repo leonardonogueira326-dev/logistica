@@ -16,6 +16,12 @@ class PedidoConsolidadoSchema(BaseModel):
     seq_solicitacao: str = ""
     ja_programado_kg: float = 0.0
     ja_programado_info: str = ""
+    representante_codigo: str = ""
+    data_referencia: str = ""
+    dias_uteis_antecedencia: int = 0
+    consulta_representante: str = ""
+    consulta_obs: str = ""
+    consulta_em: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     peso_kg: float = 0.0
@@ -203,6 +209,20 @@ class AjustarDivisaoSchema(BaseModel):
 
 class CargaRefSchema(BaseModel):
     id_carga: str
+
+
+class ConsultaRepresentanteBodySchema(BaseModel):
+    ids: list[str] = Field(min_length=1, description="id_item das linhas consultadas")
+    resultado: str = Field(pattern="^(LIBERADO|NAO_LIBERADO|PENDENTE)$")
+    autorizado_por: str = ""
+    obs: str = ""
+
+
+class ConsultaRepresentanteResponseSchema(BaseModel):
+    ok: bool
+    atualizados: int
+    message: str = ""
+    alocados: dict[str, str] = Field(default_factory=dict)
 
 
 class MoverPedidoResponseSchema(BaseModel):
