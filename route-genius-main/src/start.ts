@@ -19,4 +19,7 @@ const errorMiddleware = createMiddleware().server(async ({ next }) => {
 
 export const startInstance = createStart(() => ({
   requestMiddleware: [errorMiddleware],
+  // Ferramenta interna: as telas dependem da sessão guardada no navegador, então
+  // renderizar no servidor só gerava divergência ("hydration") e piscar de tela.
+  defaultSsr: false,
 }));

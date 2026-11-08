@@ -119,6 +119,11 @@ export function PedidoKanbanCard({
               {of && <span className="text-foreground/70"> · OF {of}</span>}
             </div>
           )}
+          {isFuturo && raw.motivo && (
+            <div className="mt-2 text-[11px] text-amber-700 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
+              {raw.motivo}
+            </div>
+          )}
           {oportunidade && oportunidadeDica && (
             <div className="mt-2 flex items-start gap-1.5 text-[11px] text-accent bg-accent/10 border border-accent/30 rounded px-2 py-1">
               <Crosshair className="w-3.5 h-3.5 shrink-0 mt-0.5" />
@@ -139,7 +144,7 @@ export function PedidoKanbanCard({
               )}
               {isFuturo && (
                 <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 text-muted-foreground">
-                  Backlog Futuro
+                  {raw.pendencias ? "Parado" : "Data futura"}
                 </Badge>
               )}
               {divisaoAutomatica && (
