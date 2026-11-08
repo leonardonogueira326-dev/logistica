@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -25,8 +25,11 @@ from api.schemas import (  # noqa: E402
     AjustarDivisaoSchema,
     CargaRefSchema,
     ConsultaRepresentanteBodySchema,
+    InformarPesoBodySchema,
+    LiberacaoComercialBodySchema,
     ConsultaRepresentanteResponseSchema,
     DividirCargaSchema,
+    FecharVeiculoSchema,
     MoverPedidoSchema,
     MoverPedidoResponseSchema,
     PedidoConsolidadoSchema,
@@ -44,7 +47,9 @@ from models import PedidoConsolidado  # noqa: E402
 from motor_ingestao import MotorIngestao  # noqa: E402
 from motor_logistica import MotorLogistica  # noqa: E402
 import config  # noqa: E402
-from normalizador import mesma_linha, normalizar_texto, resolver_rota_logistica  # noqa: E402
+from normalizador import formatar_kg, mesma_linha, normalizar_texto, resolver_rota_logistica  # noqa: E402
+from pendencias import motivo_parado, pendencias as calc_pendencias  # noqa: E402
+from representantes import aprender_representante  # noqa: E402
 from param_manager import carregar_parametros  # noqa: E402
 from gerador_romaneio import (  # noqa: E402
     gerar_romaneio_caminhao_xlsx,
@@ -52,7 +57,7 @@ from gerador_romaneio import (  # noqa: E402
     nome_arquivo_romaneio,
     nome_arquivo_romaneio_caminhao,
 )
-from historico_manager import arquivar_sessao  # noqa: E402
+from historico_manager import arquivar_sessao, chave_linha_solicitacao  # noqa: E402
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -74,6 +79,77 @@ def _consolidados_from_ingestao(data: dict[str, Any]) -> list[PedidoConsolidado]
     return [_dict_to_consolidado(c) for c in data.get("consolidados", [])]
 
 
+def _limite_consulta() -> int:
+    return int(carregar_parametros().get("antecedencia_consulta_dias_uteis", 3))
+
+
+def _consolidado_com_pendencias(c: PedidoConsolidado, limite: int | None = None) -> PedidoConsolidadoSchema:
+    limite = _limite_consulta() if limite is None else limite
+    return PedidoConsolidadoSchema(
+        **asdict(c), pendencias=calc_pendencias(c, limite), motivo_parado=motivo_parado(c, limite)
+    )
+
+
+def _nomes_veiculos(motor: MotorLogistica) -> dict[str, str]:
+    """Nome para mensagens; desambigua quando dois caminhões têm o mesmo nome."""
+    contagem: dict[str, int] = {}
+    for r in motor.rotas:
+        contagem[r.veiculo_nome] = contagem.get(r.veiculo_nome, 0) + 1
+    return {
+        r.veiculo_id: (r.veiculo_nome if contagem[r.veiculo_nome] == 1 else f"{r.veiculo_nome} ({r.veiculo_id})")
+        for r in motor.rotas
+    }
+
+
+def _alocar_resolvidos(session_id: str, ids: list[str]) -> dict[str, str]:
+    """
+    Mantém o quadro em dia sem roteirizar de novo:
+    - linha que ficou SEM pendência entra na rota (caminhão compatível e aberto,
+      ou fila de hoje);
+    - linha que voltou a ter pendência e está num caminhão sai para "Parados".
+    Retorna {id: destino} (destino começa com "↩" quando a linha saiu).
+    """
+    rote_data = store.load_roteirizacao(session_id)
+    if not rote_data or not ids:
+        return {}
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    limite = _limite_consulta()
+    motor = _motor_from_roteirizacao(rote_data)
+    nomes = _nomes_veiculos(motor)
+    resultado: dict[str, str] = {}
+    for id_linha in ids:
+        c = next((x for x in consolidados if mesma_linha(x, id_linha)), None)
+        if not c:
+            continue
+        motivo = motivo_parado(c, limite)
+        if motivo:
+            antes = {vid for vid, itens in motor.itens_por_veiculo.items()
+                     if any((i.id_item or i.numero_pedido) == (c.id_item or id_linha) for i in itens)}
+            if motor.tirar_do_caminhao_por_pendencia(c.id_item or id_linha, motivo):
+                resultado[id_linha] = "↩" + ", ".join(nomes.get(v, v) for v in sorted(antes))
+            continue
+        for entry in motor.backlog_futuro:
+            if mesma_linha(entry, id_linha):
+                entry["peso_kg"] = str(c.peso_kg)  # peso pode ter sido informado agora
+                entry["pendencias"] = ""
+        ok, _, destino = motor.antecipar_para_hoje(c.id_item or id_linha)
+        if ok:
+            resultado[id_linha] = nomes.get(destino, "fila de hoje")
+    store.save_roteirizacao(session_id, motor.para_dict())
+    return resultado
+
+
+def _resumo_sincronizacao(alocados: dict[str, str]) -> str:
+    entraram = sorted({d for d in alocados.values() if not d.startswith("↩")})
+    sairam = sorted({d[1:] for d in alocados.values() if d.startswith("↩")})
+    partes = []
+    if entraram:
+        partes.append("Entraram na rota: " + ", ".join(entraram) + ".")
+    if sairam:
+        partes.append("Saíram do caminhão e voltaram para Parados (" + ", ".join(sairam) + ").")
+    return " ".join(partes)
+
+
 def _get_active_consolidados(session_id: str) -> tuple[dict[str, Any], list[PedidoConsolidado], bool]:
     validated = store.is_validated(session_id)
     if validated:
@@ -87,12 +163,15 @@ def _get_active_consolidados(session_id: str) -> tuple[dict[str, Any], list[Pedi
     return ingest, _consolidados_from_ingestao(ingest), False
 
 
-def _roteirizacao_from_motor(motor: MotorLogistica, session_id: str) -> RoteirizacaoSchema:
+def _roteirizacao_from_motor(
+    motor: MotorLogistica, session_id: str, mensagem: str = ""
+) -> RoteirizacaoSchema:
     data = motor.para_dict()
     params = carregar_parametros()
     return RoteirizacaoSchema(
         session_id=session_id,
         jornada_maxima_minutos=int(params.get("jornada_maxima_minutos", 600)),
+        mensagem=mensagem,
         **data,
     )
 
@@ -113,6 +192,7 @@ def _motor_from_roteirizacao(data: dict[str, Any]) -> MotorLogistica:
         for vid, itens in data.get("itens_retorno_por_veiculo", {}).items()
     }
     motor.viagens_retorno_habilitadas = list(data.get("viagens_retorno_habilitadas", []))
+    motor.veiculos_fechados = list(data.get("veiculos_fechados", []))
     return motor
 
 
@@ -159,8 +239,22 @@ async def upload_session(
     pdf: Optional[UploadFile] = File(None),
     xlsb: Optional[UploadFile] = File(None),
     msg: Optional[UploadFile] = File(None),
+    session_id: Optional[str] = Form(None, description="Adicionar ao quadro do dia desta sessão"),
 ) -> UploadResponseSchema:
-    session_id = store.create_session()
+    """
+    Sem session_id: começa um dia novo. Com session_id: a lista entra no MESMO
+    quadro (ex.: segunda lista do dia ou um adicional) sem mexer no que já foi
+    montado.
+    """
+    adicionado = False
+    if session_id:
+        try:
+            store.session_path(session_id)
+            adicionado = True
+        except SessionNotFoundError:
+            raise HTTPException(status_code=404, detail="Quadro do dia não encontrado.")
+    else:
+        session_id = store.create_session()
     saved: list[str] = []
     warnings: list[str] = []
 
@@ -171,13 +265,18 @@ async def upload_session(
         if not content:
             warnings.append(f"Arquivo {field_name} vazio — ignorado.")
             continue
-        dest = store.save_upload(session_id, upload.filename, content)
+        nome = upload.filename
+        if adicionado and (store.uploads_dir(session_id) / nome).exists():
+            nome = f"{datetime.now().strftime('%H%M%S')}_{nome}"
+        dest = store.save_upload(session_id, nome, content)
         saved.append(dest.name)
 
     if not saved:
         raise HTTPException(status_code=400, detail="Nenhum arquivo enviado.")
 
-    return UploadResponseSchema(session_id=session_id, files_saved=saved, warnings=warnings)
+    return UploadResponseSchema(
+        session_id=session_id, files_saved=saved, warnings=warnings, adicionado_ao_quadro=adicionado
+    )
 
 
 @router.post("/{session_id}/ingest", response_model=IngestaoResponseSchema)
@@ -191,26 +290,100 @@ def ingest_session(
         raise HTTPException(status_code=404, detail="Sessão não encontrada.")
 
     uploads = store.uploads_dir(session_id)
-    motor = MotorIngestao(str(session_dir))
-    motor.executar(
-        caminho_pdf=_find_file(uploads, UPLOAD_FIELDS["pdf"]),
-        caminho_xlsb=_find_file(uploads, UPLOAD_FIELDS["xlsb"]),
-        caminho_msg=_find_file(uploads, UPLOAD_FIELDS["msg"]),
+    meta = store.get_meta(session_id)
+    ja_lidos = set(meta.get("pdfs_ingeridos", []))
+    pdfs = sorted(
+        (p for p in uploads.iterdir() if p.suffix.lower() in UPLOAD_FIELDS["pdf"]),
+        key=lambda p: p.stat().st_mtime,
     )
+    novos_pdfs = [p for p in pdfs if p.name not in ja_lidos]
+    xlsb = _find_file(uploads, UPLOAD_FIELDS["xlsb"])
+    msg = _find_file(uploads, UPLOAD_FIELDS["msg"])
+    atual = store.load_ingestao(session_id)
 
-    payload = motor.para_dict()
-    store.save_ingestao(session_id, payload)
+    if not atual or not novos_pdfs:
+        # Primeira lista do dia (ou reprocessar a sessão): comportamento original.
+        motor = MotorIngestao(str(session_dir))
+        motor.executar(caminho_pdf=str(pdfs[0]) if pdfs else "", caminho_xlsb=xlsb, caminho_msg=msg)
+        payload = motor.para_dict()
+        store.save_ingestao(session_id, payload)
+        store.update_meta(session_id, pdfs_ingeridos=[p.name for p in pdfs[:1]])
+        avisos, erros, linhas_novas = motor.avisos, motor.erros, len(payload["consolidados"])
+        # Outras listas que vieram juntas no mesmo upload entram em seguida.
+        restantes = pdfs[1:]
+    else:
+        payload, avisos, erros, linhas_novas, restantes = atual, [], [], 0, novos_pdfs
+
+    for pdf_extra in restantes:
+        novas, av, er = _adicionar_lista_ao_quadro(session_id, session_dir, pdf_extra, xlsb, msg)
+        payload = store.load_ingestao(session_id)
+        avisos += av
+        erros += er
+        linhas_novas += novas
 
     if tem_pendentes_ia(payload):
         background_tasks.add_task(processar_fila_llm, session_id)
 
+    _, consolidados_ativos, _ = _get_active_consolidados(session_id)
     return IngestaoResponseSchema(
         session_id=session_id,
+        linhas_novas=linhas_novas,
         resumo=ResumoIngestaoSchema(**payload["resumo"]),
-        consolidados=[PedidoConsolidadoSchema(**c) for c in payload["consolidados"]],
-        avisos=motor.avisos,
-        erros=motor.erros,
+        consolidados=[_consolidado_com_pendencias(c) for c in consolidados_ativos],
+        avisos=avisos,
+        erros=erros,
     )
+
+
+def _chave_linha(c: dict[str, Any]) -> str:
+    return (
+        chave_linha_solicitacao(c.get("numero_solicitacao", ""), c.get("seq_solicitacao", ""), c.get("id_item", ""))
+        or c.get("id_item")
+        or c.get("numero_pedido", "")
+    )
+
+
+def _adicionar_lista_ao_quadro(
+    session_id: str, session_dir: Path, pdf: Path, xlsb: str, msg: str
+) -> tuple[int, list[str], list[str]]:
+    """
+    Lê mais uma lista do dia e junta ao quadro: linhas já existentes (o que o
+    operador editou) ficam como estão; só as novas entram.
+    """
+    motor = MotorIngestao(str(session_dir))
+    motor.executar(caminho_pdf=str(pdf), caminho_xlsb=xlsb, caminho_msg=msg)
+    novo = motor.para_dict()
+    atual = store.load_ingestao(session_id) or novo
+    existentes = {_chave_linha(c) for c in atual.get("consolidados", [])}
+    novas = [c for c in novo.get("consolidados", []) if _chave_linha(c) not in existentes]
+
+    if atual is not novo:
+        atual["consolidados"] = atual.get("consolidados", []) + novas
+        atual["pedidos_pdf"] = atual.get("pedidos_pdf", []) + novo.get("pedidos_pdf", [])
+        atual.setdefault("resumo", {})["consolidados"] = str(len(atual["consolidados"]))
+        if isinstance(atual.get("avisos"), list):
+            atual["avisos"] += novo.get("avisos", []) if isinstance(novo.get("avisos"), list) else []
+    sol = novas[0].get("numero_solicitacao", "") if novas else ""
+    aviso = f"Lista {pdf.name}" + (f" (solicitação N°{sol})" if sol else "") + f": {len(novas)} linha(s) nova(s) no quadro."
+    store.save_ingestao(session_id, atual)
+    meta = store.get_meta(session_id)
+    store.update_meta(session_id, pdfs_ingeridos=sorted(set(meta.get("pdfs_ingeridos", [])) | {pdf.name}))
+
+    if novas and store.is_validated(session_id):
+        validados = store.load_consolidados_validados(session_id) or {"consolidados": []}
+        validados["consolidados"] = validados.get("consolidados", []) + novas
+        store.save_consolidados_validados(session_id, validados)
+        try:
+            arquivar_sessao(session_id, novas, data_entrega=str(meta.get("validated_at", ""))[:10])
+        except Exception:  # noqa: BLE001
+            pass
+
+    rote = store.load_roteirizacao(session_id)
+    if novas and rote:
+        quadro = _motor_from_roteirizacao(rote)
+        quadro.incluir_linhas_novas([_dict_to_consolidado(c) for c in novas])
+        store.save_roteirizacao(session_id, quadro.para_dict())
+    return len(novas), [aviso, *motor.avisos], motor.erros
 
 
 @router.get("/{session_id}/consolidados", response_model=ConsolidadosListSchema)
@@ -236,7 +409,7 @@ def list_consolidados(session_id: str) -> ConsolidadosListSchema:
         session_id=session_id,
         validated=validated,
         resumo=resumo,
-        consolidados=[PedidoConsolidadoSchema(**asdict(c)) for c in consolidados],
+        consolidados=[_consolidado_com_pendencias(c) for c in consolidados],
         avisos=avisos if isinstance(avisos, list) else [],
     )
 
@@ -266,6 +439,11 @@ def patch_consolidado(
 
     item = ingest["consolidados"][found_idx]
     updates = patch.model_dump(exclude_none=True)
+
+    if updates.get("representante") and updates["representante"] != item.get("representante"):
+        # O sistema aprende: próximas solicitações deste cliente já vêm com este nome.
+        aprender_representante(item.get("cliente_codigo", ""), updates["representante"])
+        updates["representante"] = normalizar_texto(updates["representante"])
 
     for key, value in updates.items():
         item[key] = value
@@ -375,7 +553,12 @@ def confirmar_validacao(
 
 
 @router.post("/{session_id}/roteirizar", response_model=RoteirizacaoSchema)
-def roteirizar(session_id: str) -> RoteirizacaoSchema:
+def roteirizar(session_id: str, recomecar: bool = False) -> RoteirizacaoSchema:
+    """
+    Primeira vez: monta o quadro do dia. Depois disso vira "Sugerir alocação":
+    distribui só o que está sem lugar e NÃO desfaz o que o operador montou.
+    `recomecar=true` apaga o quadro e monta tudo de novo.
+    """
     try:
         _, consolidados, _ = _get_active_consolidados(session_id)
     except SessionNotFoundError:
@@ -383,11 +566,29 @@ def roteirizar(session_id: str) -> RoteirizacaoSchema:
     except HTTPException:
         raise
 
-    motor = MotorLogistica()
-    motor.alocar_frota(consolidados)
-    payload = motor.para_dict()
-    store.save_roteirizacao(session_id, payload)
-    return _roteirizacao_from_motor(motor, session_id)
+    existente = store.load_roteirizacao(session_id)
+    if existente and not recomecar:
+        motor = _motor_from_roteirizacao(existente)
+        alocadas, na_fila = motor.sugerir_alocacao(consolidados)
+        mensagem = (
+            f"Sugestão aplicada: {alocadas} carga(s) alocada(s)"
+            + (f", {na_fila} ficaram na fila (sem espaço compatível)" if na_fila else "")
+            + ". Nada do que já estava montado foi alterado."
+            if alocadas or na_fila
+            else "Nada novo para alocar. O quadro continua como você montou."
+        )
+    else:
+        motor = MotorLogistica()
+        motor.alocar_frota(consolidados)
+        mensagem = "Quadro do dia montado." if not existente else "Quadro refeito do zero."
+    store.save_roteirizacao(session_id, motor.para_dict())
+    return _roteirizacao_from_motor(motor, session_id, mensagem)
+
+
+@router.post("/{session_id}/veiculos/{veiculo_id}/fechar", response_model=MoverPedidoResponseSchema)
+def fechar_veiculo(session_id: str, veiculo_id: str, body: FecharVeiculoSchema) -> MoverPedidoResponseSchema:
+    """Caminhão fechado: a sugestão automática não coloca nem tira nada dele."""
+    return _operar_divisao(session_id, lambda m: m.fechar_veiculo(veiculo_id, body.fechado))
 
 
 @router.get("/{session_id}/roteirizacao", response_model=RoteirizacaoSchema)
@@ -565,6 +766,7 @@ def registrar_consulta_representante(
 
     atualizados = 0
     liberados: list[str] = []
+    tocados: list[str] = []
     for id_linha in body.ids:
         ref = next((c for c in consolidados if mesma_linha(c, id_linha)), None)
         if not ref:
@@ -582,39 +784,99 @@ def registrar_consulta_representante(
         }
         if body.resultado == "LIBERADO":
             patch.update(
-                data_prevista_recebimento="",
                 representante_autorizou=quem or ref.representante,
                 motivo_adiantamento=f"Liberado pelo representante {quem or ref.representante}",
             )
             liberados.append(ref.id_item or id_linha)
-        elif ref.consulta_representante == "LIBERADO" and not ref.data_prevista_recebimento:
-            # voltou atrás: devolve a data de produção para ela ficar parada de novo
-            from dias_uteis import parse_data_br
-
-            prod = parse_data_br(ref.data_producao)
-            patch["data_prevista_recebimento"] = prod.isoformat() if prod else ""
+        if body.resultado == "PENDENTE":
+            patch["consulta_representante"] = ""
         if _patch_consolidado_session(session_id, ref.id_item or id_linha, patch):
             atualizados += 1
+            tocados.append(ref.id_item or id_linha)
 
-    alocados: dict[str, str] = {}
+    alocados = _alocar_resolvidos(session_id, tocados)
     rote_data = store.load_roteirizacao(session_id)
-    if rote_data and liberados:
-        motor = _motor_from_roteirizacao(rote_data)
-        nomes = {r.veiculo_id: r.veiculo_nome for r in motor.rotas}
-        for id_linha in liberados:
-            ok, _, destino = motor.antecipar_para_hoje(id_linha)
-            if ok:
-                alocados[id_linha] = nomes.get(destino, "fila de hoje")
-        store.save_roteirizacao(session_id, motor.para_dict())
-
     msg = f"{atualizados} linha(s) marcada(s) como {rotulo.lower()}."
     if alocados:
-        msg += " Entraram na rota: " + ", ".join(sorted(set(alocados.values()))) + "."
+        msg += " " + _resumo_sincronizacao(alocados)
     elif liberados and not rote_data:
         msg += " Elas entram na rota na próxima roteirização."
+    elif liberados:
+        msg += " Algumas ainda têm outra pendência (comercial ou peso) e seguem paradas."
     return ConsultaRepresentanteResponseSchema(
         ok=atualizados > 0, atualizados=atualizados, message=msg, alocados=alocados
     )
+
+
+@router.post("/{session_id}/liberacao-comercial", response_model=ConsultaRepresentanteResponseSchema)
+def registrar_liberacao_comercial(
+    session_id: str, body: LiberacaoComercialBodySchema
+) -> ConsultaRepresentanteResponseSchema:
+    """
+    Pagamento antecipado: a linha fica parada no representante até o comercial
+    liberar por e-mail. LIBERADO registra quem liberou; AGUARDANDO desfaz.
+    """
+    try:
+        store.session_path(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada.")
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    agora = datetime.now(timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
+    quem, obs = body.liberado_por.strip(), body.obs.strip()
+    atualizados, liberados, tocados = 0, [], []
+    for id_linha in body.ids:
+        ref = next((c for c in consolidados if mesma_linha(c, id_linha)), None)
+        if not ref:
+            continue
+        if body.resultado == "LIBERADO":
+            linha = f"COMERCIAL LIBEROU {agora}" + (f" por {quem}" if quem else "") + (f" — {obs}" if obs else "")
+            patch = {
+                "liberacao_comercial": "LIBERADO",
+                "liberacao_comercial_por": quem,
+                "liberacao_comercial_em": agora,
+                "liberacao_comercial_obs": obs,
+            }
+            liberados.append(ref.id_item or id_linha)
+        else:
+            linha = f"LIBERAÇÃO COMERCIAL DESFEITA {agora}"
+            patch = {
+                "liberacao_comercial": "AGUARDANDO",
+                "liberacao_comercial_por": "",
+                "liberacao_comercial_em": "",
+                "liberacao_comercial_obs": "",
+            }
+        patch["auditoria"] = (ref.auditoria + " | " + linha).strip(" |")
+        if _patch_consolidado_session(session_id, ref.id_item or id_linha, patch):
+            atualizados += 1
+            tocados.append(ref.id_item or id_linha)
+    alocados = _alocar_resolvidos(session_id, tocados)
+    rotulo = "liberada(s) pelo comercial" if body.resultado == "LIBERADO" else "voltou(aram) a aguardar o comercial"
+    msg = f"{atualizados} linha(s) {rotulo}."
+    if alocados:
+        msg += " " + _resumo_sincronizacao(alocados)
+    return ConsultaRepresentanteResponseSchema(ok=atualizados > 0, atualizados=atualizados, message=msg, alocados=alocados)
+
+
+@router.post("/{session_id}/informar-peso", response_model=ConsultaRepresentanteResponseSchema)
+def informar_peso(session_id: str, body: InformarPesoBodySchema) -> ConsultaRepresentanteResponseSchema:
+    """Item que veio com peso zerado: a logística informa o peso real."""
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    ref = next((c for c in consolidados if mesma_linha(c, body.id)), None)
+    if not ref:
+        raise HTTPException(status_code=404, detail=f"Linha {body.id} não encontrada.")
+    agora = datetime.now(timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
+    peso = round(body.peso_kg, 1)
+    patch = {
+        "peso_kg": peso,
+        "auditoria": (ref.auditoria + f" | PESO INFORMADO {agora}: {formatar_kg(peso)} kg (veio zerado no PDF)").strip(" |"),
+    }
+    if not _patch_consolidado_session(session_id, ref.id_item or body.id, patch):
+        raise HTTPException(status_code=404, detail="Não foi possível atualizar a linha.")
+    alocados = _alocar_resolvidos(session_id, [ref.id_item or body.id])
+    msg = f"Peso de {ref.cliente} atualizado para {formatar_kg(peso)} kg."
+    if alocados:
+        msg += " " + _resumo_sincronizacao(alocados)
+    return ConsultaRepresentanteResponseSchema(ok=True, atualizados=1, message=msg, alocados=alocados)
 
 
 def _operar_divisao(session_id: str, operacao) -> MoverPedidoResponseSchema:

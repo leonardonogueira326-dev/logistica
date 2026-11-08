@@ -6,6 +6,8 @@ import {
   anteciparPedido,
   operarDivisao,
   registrarConsultaRepresentante,
+  registrarLiberacaoComercial,
+  informarPeso,
   getConsolidados,
   getRoteirizacao,
   ingestSession,
@@ -13,9 +15,11 @@ import {
   moverPedido,
   patchConsolidado,
   roteirizar,
+  roteirizarQuadro,
+  fecharVeiculo,
   uploadSession,
 } from "@/lib/api-client";
-import type { AnteciparPedidoBody, ConsolidadoPatch, ConsultaRepresentanteRequest, OperacaoDivisao, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
+import type { AnteciparPedidoBody, ConsolidadoPatch, ConsultaRepresentanteRequest, LiberacaoComercialRequest, OperacaoDivisao, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
 import { COLUMN_BACKLOG } from "@/lib/logistica-types";
 import { optimisticMoveRoteirizacao } from "@/lib/optimistic-move";
 import { SESSION_KEY } from "@/lib/logistica-types";
@@ -85,6 +89,22 @@ export function useLogisticaSession(sessionId: string | null) {
     },
   });
 
+  /** Apaga o quadro do dia e monta tudo de novo (pede confirmação na tela). */
+  const recomecarMutation = useMutation({
+    mutationFn: (sid: string) => roteirizarQuadro(sid, true),
+    onSuccess: (data, sid) => {
+      queryClient.setQueryData(["roteirizacao", sid], data);
+    },
+  });
+
+  const fecharMutation = useMutation({
+    mutationFn: ({ sid, veiculoId, fechado }: { sid: string; veiculoId: string; fechado: boolean }) =>
+      fecharVeiculo(sid, veiculoId, fechado),
+    onSuccess: (data, { sid }) => {
+      queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
+    },
+  });
+
   const moverMutation = useMutation({
     mutationFn: ({ sid, body }: { sid: string; body: MoverPedidoRequest }) =>
       moverPedido(sid, body),
@@ -115,6 +135,24 @@ export function useLogisticaSession(sessionId: string | null) {
   const consultaMutation = useMutation({
     mutationFn: ({ sid, body }: { sid: string; body: ConsultaRepresentanteRequest }) =>
       registrarConsultaRepresentante(sid, body),
+    onSuccess: (_data, { sid }) => {
+      queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
+      queryClient.invalidateQueries({ queryKey: ["roteirizacao", sid] });
+    },
+  });
+
+  const comercialMutation = useMutation({
+    mutationFn: ({ sid, body }: { sid: string; body: LiberacaoComercialRequest }) =>
+      registrarLiberacaoComercial(sid, body),
+    onSuccess: (_data, { sid }) => {
+      queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
+      queryClient.invalidateQueries({ queryKey: ["roteirizacao", sid] });
+    },
+  });
+
+  const pesoMutation = useMutation({
+    mutationFn: ({ sid, body }: { sid: string; body: { id: string; peso_kg: number } }) =>
+      informarPeso(sid, body),
     onSuccess: (_data, { sid }) => {
       queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
       queryClient.invalidateQueries({ queryKey: ["roteirizacao", sid] });
@@ -173,10 +211,14 @@ export function useLogisticaSession(sessionId: string | null) {
     ingestMutation,
     confirmMutation,
     roteirizarMutation,
+    recomecarMutation,
+    fecharMutation,
     moverMutation,
     anteciparMutation,
     dividirMutation,
     consultaMutation,
+    comercialMutation,
+    pesoMutation,
     segundaViagemMutation,
     patchConsolidadoDebounced,
   };

@@ -19,7 +19,7 @@ const navItems = [
   { to: "/upload", label: "Upload & Processamento", icon: Upload },
   { to: "/validacao", label: "Quarentena — Validação", icon: ClipboardCheck },
   { to: "/roteirizar", label: "Pronto p/ Roteirizar", icon: TruckIcon },
-  { to: "/representantes", label: "Consultar Representante", icon: PhoneCall },
+  { to: "/representantes", label: "Pendências / Representante", icon: PhoneCall },
   { to: "/bloqueados", label: "Bloqueados & Pendências", icon: AlertTriangle },
   { to: "/retiras", label: "Retiras (FOB)", icon: PackageCheck },
 ] as const;

@@ -22,6 +22,13 @@ class PedidoConsolidadoSchema(BaseModel):
     consulta_representante: str = ""
     consulta_obs: str = ""
     consulta_em: str = ""
+    liberacao_comercial: str = ""
+    liberacao_comercial_por: str = ""
+    liberacao_comercial_em: str = ""
+    liberacao_comercial_obs: str = ""
+    # Calculadas na leitura (pendencias.py): o que segura a linha fora da rota
+    pendencias: list[str] = Field(default_factory=list)
+    motivo_parado: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     peso_kg: float = 0.0
@@ -96,16 +103,22 @@ class ResumoIngestaoSchema(BaseModel):
 
 class IngestaoResponseSchema(BaseModel):
     session_id: str
+    linhas_novas: int = 0
     resumo: ResumoIngestaoSchema
     consolidados: list[PedidoConsolidadoSchema]
     avisos: list[str] = Field(default_factory=list)
     erros: list[str] = Field(default_factory=list)
 
 
+class FecharVeiculoSchema(BaseModel):
+    fechado: bool = True
+
+
 class UploadResponseSchema(BaseModel):
     session_id: str
     files_saved: list[str]
     warnings: list[str] = Field(default_factory=list)
+    adicionado_ao_quadro: bool = False
 
 
 class ConsolidadosListSchema(BaseModel):
@@ -181,6 +194,8 @@ class RoteirizacaoSchema(BaseModel):
     coletas: list[dict[str, str]] = Field(default_factory=list)
     itens_retorno_por_veiculo: dict[str, list[ItemRotaSchema]] = Field(default_factory=dict)
     viagens_retorno_habilitadas: list[str] = Field(default_factory=list)
+    veiculos_fechados: list[str] = Field(default_factory=list)
+    mensagem: str = ""
     metricas_retorno: dict[str, dict[str, str | float]] = Field(default_factory=dict)
     jornada_maxima_minutos: int = 600
 
@@ -209,6 +224,18 @@ class AjustarDivisaoSchema(BaseModel):
 
 class CargaRefSchema(BaseModel):
     id_carga: str
+
+
+class LiberacaoComercialBodySchema(BaseModel):
+    ids: list[str] = Field(min_length=1)
+    resultado: str = Field(pattern="^(LIBERADO|AGUARDANDO)$")
+    liberado_por: str = ""
+    obs: str = Field("", description="Ex.: 'e-mail da Ana (comercial) 19/06 10:32'")
+
+
+class InformarPesoBodySchema(BaseModel):
+    id: str
+    peso_kg: float = Field(gt=0)
 
 
 class ConsultaRepresentanteBodySchema(BaseModel):

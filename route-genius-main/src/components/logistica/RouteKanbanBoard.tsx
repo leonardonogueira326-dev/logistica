@@ -8,7 +8,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Truck, Inbox, PackageSearch, Loader2, AlertTriangle, CalendarClock, Download, MapPin, Clock } from "lucide-react";
+import { Truck, Inbox, PackageSearch, Loader2, AlertTriangle, CalendarClock, Download, MapPin, Clock, Lock, LockOpen } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { PedidoAuditSheet } from "@/components/logistica/PedidoAuditSheet";
@@ -68,6 +68,7 @@ export function RouteKanbanBoard({
   onMove,
   onAntecipar,
   onDivisao,
+  onFecharVeiculo,
   onExportRomaneio,
   onHabilitarSegundaViagem,
   exportingCaminhaoId,
@@ -89,6 +90,7 @@ export function RouteKanbanBoard({
     representante_autorizou: string;
   }) => Promise<void>;
   onDivisao?: (operacao: OperacaoDivisao) => Promise<void>;
+  onFecharVeiculo?: (veiculoId: string, fechado: boolean) => Promise<void>;
   onExportRomaneio?: (caminhaoId: string) => Promise<void>;
   onHabilitarSegundaViagem?: (veiculoId: string) => Promise<void>;
   exportingCaminhaoId?: string | null;
@@ -178,7 +180,7 @@ export function RouteKanbanBoard({
       ...vehicleCols,
       {
         id: COLUMN_BACKLOG_FUTURO,
-        label: "Backlog Futuro",
+        label: "Parados (pendências)",
         rota: null,
         icon: CalendarClock,
         variant: "futuro" as const,
@@ -463,6 +465,12 @@ export function RouteKanbanBoard({
                   : undefined
               }
               onExportRomaneio={col.rota ? onExportRomaneio : undefined}
+              fechado={!!col.rota && (data.veiculos_fechados ?? []).includes(col.id)}
+              onToggleFechar={
+                col.rota && !col.isRetorno && onFecharVeiculo
+                  ? () => void onFecharVeiculo(col.id, !(data.veiculos_fechados ?? []).includes(col.id))
+                  : undefined
+              }
               exportingRomaneio={exportingCaminhaoId === col.id}
               onHabilitarSegundaViagem={
                 col.rota && !col.isRetorno ? onHabilitarSegundaViagem : undefined
@@ -741,6 +749,8 @@ function KanbanColumn({
   metricasRetorno,
   isRetorno,
   veiculoBaseId,
+  fechado,
+  onToggleFechar,
 }: {
   id: string;
   title: string;
@@ -762,6 +772,8 @@ function KanbanColumn({
   metricasRetorno?: Roteirizacao["metricas_retorno"];
   isRetorno?: boolean;
   veiculoBaseId?: string;
+  fechado?: boolean;
+  onToggleFechar?: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id, data: { columnId: id } });
 
@@ -834,11 +846,31 @@ function KanbanColumn({
               <TooltipContent side="bottom">Exportar Romaneio</TooltipContent>
             </Tooltip>
           )}
+          {onToggleFechar && (
+            <button
+              type="button"
+              onClick={onToggleFechar}
+              title={
+                fechado
+                  ? "Caminhão fechado: a sugestão automática não mexe nele. Clique para reabrir."
+                  : "Fechar caminhão: a sugestão automática não coloca nem tira nada dele."
+              }
+              className={cn(
+                "shrink-0 rounded p-1 hover:bg-muted",
+                fechado ? "text-amber-600" : "text-muted-foreground",
+              )}
+            >
+              {fechado ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />}
+            </button>
+          )}
           <span className="text-xs text-muted-foreground shrink-0">{items.length}</span>
         </div>
+        {fechado && (
+          <div className="mt-1 text-[11px] font-medium text-amber-700">Fechado — a sugestão não mexe</div>
+        )}
         {variant === "futuro" && (
           <div className="mt-1 text-[11px] text-muted-foreground">
-            Pedidos com recebimento futuro — visíveis para decisão
+            Aguardando representante, comercial ou peso — veja em Pendências / Representante
           </div>
         )}
         {variant === "local" && (

@@ -45,8 +45,8 @@ from normalizador import (
 )
 from param_manager import carregar_parametros
 from dias_uteis import dias_uteis_ate, parse_data_br
-from representantes import carregar_representantes, limpar_representante_pdf, localizar_base
-from quarentena import avaliar_quarentena
+from representantes import carregar_aprendidos, carregar_representantes, limpar_representante_pdf, localizar_base
+from quarentena import avaliar_quarentena, detectar_alertas_comerciais
 from historico_manager import hash_pedido, linha_ja_arquivada, programado_anteriormente
 
 
@@ -77,6 +77,7 @@ class MotorIngestao:
         self.consolidados: list[PedidoConsolidado] = []
         self.params = carregar_parametros()
         self._representantes: dict[str, dict[str, str]] | None = None
+        self._representantes_aprendidos = carregar_aprendidos()
         self._lookup_clientes = obter_lookup_clientes(str(self.pasta_dados))
         self._cadastro_geo = carregar_cadastro_geolocalizado()
         self._caminho_cadastro_mestre = str(resolver_arquivo_cadastro(str(self.pasta_dados)) or "")
@@ -463,9 +464,14 @@ class MotorIngestao:
             self._representantes = carregar_representantes(localizar_base([self.pasta_dados]))
             if self._representantes:
                 self.avisos.append(f"Representantes: base de clientes com {len(self._representantes)} clientes")
-        da_base = self._representantes.get(normalizar_codigo_cliente(pedido.cliente_codigo))
+        codigo = normalizar_codigo_cliente(pedido.cliente_codigo)
+        aprendido = self._representantes_aprendidos.get(codigo)
+        da_base = self._representantes.get(codigo)
         do_pdf = limpar_representante_pdf(pedido.representante)
-        if da_base:
+        if aprendido:
+            item.representante = aprendido
+            item.representante_codigo = (da_base or {}).get("representante_codigo", "")
+        elif da_base:
             item.representante = da_base["representante"]
             item.representante_codigo = da_base["representante_codigo"]
         elif do_pdf and do_pdf != "NÃO IDENTIFICADO":
@@ -475,29 +481,19 @@ class MotorIngestao:
 
     def _aplicar_regra_consulta(self, item: PedidoConsolidado, pedido: PedidoFaturamento) -> None:
         """
-        Dt. Produção a N dias úteis (padrão 3) ou mais da data do PDF: o material
-        pode estar pronto, mas só sai com OK do representante. Até lá a linha
-        fica em "Consultar representante" (backlog futuro), não entra na rota.
+        Guarda a antecedência da Dt. Produção (dias úteis desde a data do PDF) e
+        marca pagamento antecipado. Se a linha fica parada é decidido em
+        pendencias.py, a partir do estado atual (o frete pode mudar na conferência).
         """
         referencia = parse_data_br(pedido.data_faturamento) or date.today()
         item.data_referencia = referencia.isoformat()
         producao = parse_data_br(pedido.data_producao)
-        if not producao:
-            return
-        extras = self.params.get("feriados_extras", [])
-        item.dias_uteis_antecedencia = dias_uteis_ate(referencia, producao, extras)
-        limite = int(self.params.get("antecedencia_consulta_dias_uteis", 3))
-        if item.dias_uteis_antecedencia < limite:
-            return
-        if item.status in (config.COD_BLOQUEIO_FISCAL,):
-            return
-        item.consulta_representante = "PENDENTE"
-        if not item.data_prevista_recebimento:
-            item.data_prevista_recebimento = producao.isoformat()
-        item.motivo_atraso = (
-            f"Consultar representante: Dt. Produção {producao.strftime('%d/%m/%Y')} "
-            f"({item.dias_uteis_antecedencia} dias úteis)"
-        )
+        if producao:
+            extras = self.params.get("feriados_extras", [])
+            item.dias_uteis_antecedencia = dias_uteis_ate(referencia, producao, extras)
+        alertas = detectar_alertas_comerciais(pedido.observacao_comercial, pedido.descricao_item)
+        if any(a.startswith("Pagamento antecipado") for a in alertas):
+            item.liberacao_comercial = "AGUARDANDO"
 
     def _indexar_retencoes(self) -> dict[str, RetencaoFiscal]:
         mapa: dict[str, RetencaoFiscal] = {}

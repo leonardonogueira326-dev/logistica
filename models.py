@@ -107,9 +107,14 @@ class PedidoConsolidado:
     # Consulta ao representante: Dt. Produção a N dias úteis ou mais da data do PDF
     data_referencia: str = ""  # Data para Faturamento do PDF (ISO)
     dias_uteis_antecedencia: int = 0
-    consulta_representante: str = ""  # "", PENDENTE, LIBERADO, NAO_LIBERADO
+    consulta_representante: str = ""  # "", LIBERADO, NAO_LIBERADO (pendência é calculada)
     consulta_obs: str = ""
     consulta_em: str = ""
+    # Pagamento antecipado: "AGUARDANDO" até o comercial liberar por e-mail
+    liberacao_comercial: str = ""
+    liberacao_comercial_por: str = ""
+    liberacao_comercial_em: str = ""
+    liberacao_comercial_obs: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     peso_kg: float = 0.0

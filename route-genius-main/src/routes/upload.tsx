@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import {
+  getStoredSessionId,
   setStoredSessionId,
   useLogisticaSession,
 } from "@/hooks/useLogisticaSession";
@@ -41,6 +42,10 @@ function UploadPage() {
   const [step, setStep] = useState<"idle" | "upload" | "ingest" | "done" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const inputRefs = useRef<Partial<Record<SlotId, HTMLInputElement | null>>>({});
+  // Já existe um quadro do dia? Então a próxima lista entra nele (não recomeça).
+  const sessaoAtual = typeof window !== "undefined" ? getStoredSessionId() : null;
+  const [modo, setModo] = useState<"adicionar" | "novo">(sessaoAtual ? "adicionar" : "novo");
+  const [resultado, setResultado] = useState("");
 
   const hasPdf = !!files.pdf;
   const canRun = hasPdf;
@@ -55,16 +60,26 @@ function UploadPage() {
     setStep("upload");
     setErrorMsg("");
     try {
+      const adicionar = modo === "adicionar" && !!sessaoAtual;
       const result = await uploadMutation.mutateAsync({
         pdf: files.pdf,
         xlsb: files.xlsb,
         msg: files.msg,
+        sessionId: adicionar ? sessaoAtual : null,
       });
       setStoredSessionId(result.session_id);
       setStep("ingest");
-      await ingestMutation.mutateAsync(result.session_id);
+      const ing = await ingestMutation.mutateAsync(result.session_id);
       setStep("done");
-      setTimeout(() => navigate({ to: "/validacao" }), 600);
+      if (adicionar) {
+        setResultado(
+          `${ing.linhas_novas ?? 0} linha(s) nova(s) adicionadas ao quadro do dia. ` +
+            "O que já estava montado nos caminhões não mudou.",
+        );
+        setTimeout(() => navigate({ to: "/validacao" }), 1800);
+      } else {
+        setTimeout(() => navigate({ to: "/validacao" }), 600);
+      }
     } catch (err) {
       setStep("error");
       setErrorMsg(err instanceof Error ? err.message : "Erro no processamento");
@@ -138,6 +153,42 @@ function UploadPage() {
         })}
       </div>
 
+      {sessaoAtual && (
+        <div className="bg-card border border-border rounded-xl p-4 shadow-sm space-y-2">
+          <div className="text-sm font-semibold">Esta lista é…</div>
+          <div className="flex flex-wrap gap-3">
+            {(
+              [
+                ["adicionar", "Mais uma lista de hoje", "Segunda lista ou adicional: entra no quadro atual sem mexer nos caminhões."],
+                ["novo", "Começar um dia novo", "Abre um quadro novo e vazio."],
+              ] as const
+            ).map(([valor, titulo, desc]) => (
+              <label
+                key={valor}
+                className={cn(
+                  "flex-1 min-w-[240px] cursor-pointer rounded-lg border p-3 text-sm",
+                  modo === valor ? "border-accent bg-accent/5" : "border-border",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="modo-upload"
+                  className="mr-2"
+                  checked={modo === valor}
+                  onChange={() => setModo(valor)}
+                />
+                <span className="font-medium">{titulo}</span>
+                <div className="text-xs text-muted-foreground mt-1 ml-5">{desc}</div>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {resultado && (
+        <div className="rounded-lg border border-success/40 bg-success/10 px-4 py-3 text-sm">{resultado}</div>
+      )}
+
       <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -157,7 +208,7 @@ function UploadPage() {
             )}
           >
             {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-            Executar ingestão
+            {modo === "adicionar" && sessaoAtual ? "Adicionar ao quadro" : "Executar ingestão"}
           </button>
         </div>
 

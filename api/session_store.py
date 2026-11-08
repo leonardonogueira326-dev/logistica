@@ -85,6 +85,13 @@ class SessionStore:
         meta["validated_at"] = datetime.now(timezone.utc).isoformat()
         self._write_json(session_id, "meta.json", meta)
 
+    def update_meta(self, session_id: str, **campos: Any) -> dict[str, Any]:
+        with _lock_for(session_id):
+            meta = self.get_meta(session_id)
+            meta.update(campos)
+            self._write_json(session_id, "meta.json", meta)
+            return meta
+
     def is_validated(self, session_id: str) -> bool:
         try:
             return bool(self.get_meta(session_id).get("validated", False))

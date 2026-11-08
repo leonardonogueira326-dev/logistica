@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Download, Info, LayoutGrid, Loader2, Map, Zap } from "lucide-react";
+import { Download, Info, LayoutGrid, Loader2, Map, RotateCcw, Zap } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
 import { RouteKanbanBoard } from "@/components/logistica/RouteKanbanBoard";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   getStoredSessionId,
@@ -25,9 +26,10 @@ export const Route = createFileRoute("/roteirizar")({
 
 function RoteirizarPage() {
   const sessionId = getStoredSessionId();
-  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, moverMutation, anteciparMutation, segundaViagemMutation, dividirMutation } =
+  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, recomecarMutation, fecharMutation, moverMutation, anteciparMutation, segundaViagemMutation, dividirMutation } =
     useLogisticaSession(sessionId);
   const [lastWarning, setLastWarning] = useState("");
+  const [confirmarRecomeco, setConfirmarRecomeco] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportingCaminhaoId, setExportingCaminhaoId] = useState<string | null>(null);
   const [habilitandoSegundaViagemId, setHabilitandoSegundaViagemId] = useState<string | null>(null);
@@ -63,11 +65,19 @@ function RoteirizarPage() {
   const loading =
     roteirizacaoQuery.isLoading ||
     roteirizarMutation.isPending ||
+    recomecarMutation.isPending ||
     moverMutation.isPending ||
     anteciparMutation.isPending ||
     segundaViagemMutation.isPending;
 
   const data = roteirizacaoQuery.data ?? roteirizarMutation.data;
+  const mensagemQuadro = roteirizarMutation.data?.mensagem || recomecarMutation.data?.mensagem || "";
+
+  const handleFecharVeiculo = async (veiculoId: string, fechado: boolean) => {
+    if (!sessionId) return;
+    const r = await fecharMutation.mutateAsync({ sid: sessionId, veiculoId, fechado });
+    setLastWarning(r.warning ?? "");
+  };
 
   const handleMove = async (payload: {
     numero_pedido: string;
@@ -156,16 +166,56 @@ function RoteirizarPage() {
           <button
             disabled={loading}
             onClick={() => roteirizarMutation.mutate(sessionId)}
+            title="Distribui só o que está sem lugar (fila, linhas novas, pendências resolvidas). Não desfaz nada do que você montou e não mexe em caminhões fechados."
             className={cn(
               "inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold",
               loading ? "bg-muted text-muted-foreground" : "bg-accent text-accent-foreground",
             )}
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-            Recalcular automático
+            Sugerir alocação
+          </button>
+          <button
+            disabled={loading || !data}
+            onClick={() => setConfirmarRecomeco(true)}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm border border-destructive/40 text-destructive hover:bg-destructive/10 disabled:opacity-50"
+          >
+            <RotateCcw className="w-4 h-4" /> Recomeçar do zero
           </button>
         </div>
       </div>
+
+      {mensagemQuadro && (
+        <div className="rounded-lg border border-accent/30 bg-accent/5 px-4 py-2 text-sm">{mensagemQuadro}</div>
+      )}
+
+      <Dialog open={confirmarRecomeco} onOpenChange={setConfirmarRecomeco}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Recomeçar o quadro do zero?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Tudo o que foi montado à mão (cargas arrastadas, divisões, ajustes, caminhões fechados) será
+            perdido e o sistema monta um quadro novo. Para só encaixar o que está na fila, use{" "}
+            <b>Sugerir alocação</b>.
+          </p>
+          <DialogFooter>
+            <button type="button" className="px-4 py-2 text-sm rounded-md border" onClick={() => setConfirmarRecomeco(false)}>
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="px-4 py-2 text-sm rounded-md bg-destructive text-destructive-foreground"
+              onClick={async () => {
+                setConfirmarRecomeco(false);
+                await recomecarMutation.mutateAsync(sessionId);
+              }}
+            >
+              Recomeçar do zero
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {loading && !data && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -196,6 +246,7 @@ function RoteirizarPage() {
               loading={moverMutation.isPending || anteciparMutation.isPending || dividirMutation.isPending}
               onMove={handleMove}
               onDivisao={handleDivisao}
+              onFecharVeiculo={handleFecharVeiculo}
               onAntecipar={handleAntecipar}
               onExportRomaneio={handleExportRomaneioCaminhao}
               exportingCaminhaoId={exportingCaminhaoId}

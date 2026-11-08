@@ -65,3 +65,12 @@ def test_peso_zerado_vai_para_conferencia():
 def test_regra_aprendida_dispensa_conferencia():
     revisao, _, _ = avaliar_quarentena(0.0, "PAGAMENTO ANTECIPADO", aprendizado_aplicado="SIM")
     assert revisao == "NAO"
+
+
+def test_transportadora_retira_na_fabrica_e_retira_fob():
+    from extrator_pdf import classificar_frete_com_confianca
+
+    tipo, confianca = classificar_frete_com_confianca(
+        "Redução do DECRETO Nº 11.055", "RETIRA NA FABRICA - , - -", "", "00347"
+    )
+    assert (tipo, confianca) == ("RETIRA_FOB", True)

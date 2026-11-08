@@ -3,6 +3,7 @@ import type {
   DividirCargaRequest,
   OperacaoDivisao,
   ConsultaRepresentanteRequest,
+  LiberacaoComercialRequest,
   ConsultaRepresentanteResponse,
   AnteciparPedidoResponse,
   ConfigResponse,
@@ -41,8 +42,11 @@ export async function uploadSession(files: {
   pdf?: File;
   xlsb?: File;
   msg?: File;
+  /** Adicionar ao quadro do dia desta sessão (segunda lista / adicional) */
+  sessionId?: string | null;
 }): Promise<UploadResponse> {
   const form = new FormData();
+  if (files.sessionId) form.append("session_id", files.sessionId);
   if (files.pdf) form.append("pdf", files.pdf);
   if (files.xlsb) form.append("xlsb", files.xlsb);
   if (files.msg) form.append("msg", files.msg);
@@ -50,6 +54,25 @@ export async function uploadSession(files: {
   return request<UploadResponse>("/sessions/upload", {
     method: "POST",
     body: form,
+  });
+}
+
+/** Fecha/reabre um caminhão: a sugestão automática não mexe em caminhão fechado. */
+export async function fecharVeiculo(
+  sessionId: string,
+  veiculoId: string,
+  fechado: boolean,
+): Promise<MoverPedidoResponse> {
+  return request<MoverPedidoResponse>(
+    `/sessions/${sessionId}/veiculos/${encodeURIComponent(veiculoId)}/fechar`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fechado }) },
+  );
+}
+
+/** Primeira vez monta o quadro; depois só sugere (não desfaz). recomecar=true refaz do zero. */
+export async function roteirizarQuadro(sessionId: string, recomecar = false): Promise<Roteirizacao> {
+  return request<Roteirizacao>(`/sessions/${sessionId}/roteirizar${recomecar ? "?recomecar=true" : ""}`, {
+    method: "POST",
   });
 }
 
@@ -200,6 +223,30 @@ export async function saveSetup(config: ConfiguracaoOperacional): Promise<SetupR
 export async function buscarHistorico(q: string, limite = 20): Promise<HistoricoResponse> {
   const params = new URLSearchParams({ q, limite: String(limite) });
   return request<HistoricoResponse>(`/historico?${params}`);
+}
+
+/** Pagamento antecipado: comercial liberou por e-mail. */
+export async function registrarLiberacaoComercial(
+  sessionId: string,
+  body: LiberacaoComercialRequest,
+): Promise<ConsultaRepresentanteResponse> {
+  return request<ConsultaRepresentanteResponse>(`/sessions/${sessionId}/liberacao-comercial`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Item veio com peso zerado: logística informa o peso. */
+export async function informarPeso(
+  sessionId: string,
+  body: { id: string; peso_kg: number },
+): Promise<ConsultaRepresentanteResponse> {
+  return request<ConsultaRepresentanteResponse>(`/sessions/${sessionId}/informar-peso`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 /** Resposta do representante: pode carregar hoje? */
