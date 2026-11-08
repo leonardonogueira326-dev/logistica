@@ -24,6 +24,7 @@ from normalizador import (
     parse_peso_kg,
 )
 
+MARCADOR_OBS = "\u00a7OBS\u00a7 "
 REGEX_INICIO_ITEM = re.compile(r"^(\d{3})\s+(\d{6}/\d{2}/\d{3})\s+(.+)$")
 REGEX_PESO = re.compile(r"([\d.]+,\d{2})\s*(?:KG|ROLO)\b", re.IGNORECASE)
 REGEX_DATA_PRODUCAO = re.compile(r"\b(\d{2}/\d{2}/\d{2})\b")
@@ -106,6 +107,20 @@ REGEX_PALAVRAS_ADMINISTRATIVAS = re.compile(
 )
 
 
+# Texto fiscal padrão que aparece em quase toda observação. Não carrega
+# instrução logística, mas contém "DECRETO" e fazia o filtro achar que a
+# observação inteira era administrativa (a IA nunca era chamada).
+REGEX_TEXTO_PADRAO = re.compile(
+    r"-?\s*Redu[cç][aã]o\s+do\s+DECRETO\s+N[º°o]?\s*11\.?055\s*,?\s*DE\s+28\s+DE\s+ABRIL\s+DE\s+2022\s*-?",
+    re.IGNORECASE,
+)
+
+
+def remover_texto_padrao(texto: str) -> str:
+    """Remove trechos-padrão (decreto fiscal) antes de analisar a observação."""
+    return re.sub(r"\s+", " ", REGEX_TEXTO_PADRAO.sub(" ", texto or "")).strip(" -")
+
+
 def _transportadora_superfine(texto_transp: str, codigo_transp: str) -> bool:
     codigo = normalizar_codigo_cliente(codigo_transp)
     if codigo == config.COD_SUPERFINE_TRANSP:
@@ -131,7 +146,7 @@ def observacao_apenas_administrativa(
     True quando a observação é puramente administrativa (pagamento, boleto, etc.)
     sem instrução logística forte — candidata a pular a IA.
     """
-    obs = normalizar_texto(texto_observacao)
+    obs = normalizar_texto(remover_texto_padrao(texto_observacao))
     desc = normalizar_texto(texto_descricao)
     texto = f"{obs} {desc}".strip()
     if not texto:
@@ -217,6 +232,7 @@ class ExtratorPDF:
         self.caminho_pdf = Path(caminho_pdf)
         self.avisos: list[str] = []
         self.erros: list[str] = []
+        self._ultimo_modo_colunas = False
 
     def extrair(self) -> list[PedidoFaturamento]:
         """Ponto de entrada: retorna lista de PedidoFaturamento."""
@@ -247,7 +263,78 @@ class ExtratorPDF:
         return pedidos
 
     def _extrair_linhas_pdf(self) -> list[str]:
-        """Extrai texto; prefere modo sem layout quando preserva melhor as colunas."""
+        """Extrai linhas; prefere o modo por colunas (posição x das palavras)."""
+        try:
+            linhas_colunas = self._extrair_linhas_por_coluna()
+        except Exception as exc:  # noqa: BLE001
+            linhas_colunas = []
+            self.avisos.append(f"Modo colunas falhou ({exc}); usando texto corrido.")
+        if linhas_colunas:
+            blocos = len(self._segmentar_blocos(linhas_colunas))
+            if blocos:
+                self.avisos.append(f"Modo extração: colunas ({blocos} blocos).")
+                self._ultimo_modo_colunas = True
+                return linhas_colunas
+        return self._extrair_linhas_texto_corrido()
+
+    def _extrair_linhas_por_coluna(self) -> list[str]:
+        """
+        Lê as palavras com coordenadas e separa a coluna "Observação" do resto.
+
+        No relatório do ERP a coluna da direita (a partir do cabeçalho "Observação")
+        contém, nesta ordem: o texto da observação, depois Representante:, Destino:
+        e Transp:. No texto corrido essas colunas se misturam com o nome do cliente
+        (ex.: "CEVI ... PAGAMENTO ANTECIPADO"). Aqui a observação sai em linhas
+        marcadas com MARCADOR_OBS e o resto segue o formato que o parser já entende.
+        """
+        saida: list[str] = []
+        with pdfplumber.open(self.caminho_pdf) as pdf:
+            for num_pag, pagina in enumerate(pdf.pages, start=1):
+                palavras = pagina.extract_words(keep_blank_chars=False)
+                cab = [
+                    w for w in palavras
+                    if w["text"].startswith("Observa") and w["x0"] > pagina.width * 0.4
+                ]
+                if not cab:
+                    if num_pag == 1:
+                        return []
+                    continue
+                x_obs = cab[0]["x0"] - 4
+                topo_cab = cab[0]["bottom"]
+
+                linhas_visuais: list[list[dict]] = []
+                for w in sorted(palavras, key=lambda w: (w["top"], w["x0"])):
+                    if w["top"] <= topo_cab:
+                        continue
+                    if linhas_visuais and abs(w["top"] - linhas_visuais[-1][0]["top"]) <= 2.5:
+                        linhas_visuais[-1].append(w)
+                    else:
+                        linhas_visuais.append([w])
+
+                campo_estruturado = False
+                for linha in linhas_visuais:
+                    esq = " ".join(w["text"] for w in sorted(linha, key=lambda w: w["x0"]) if w["x0"] < x_obs)
+                    dir_ = " ".join(w["text"] for w in sorted(linha, key=lambda w: w["x0"]) if w["x0"] >= x_obs)
+                    esq, dir_ = esq.strip(), dir_.strip()
+
+                    if esq and self._linha_ignoravel(esq):
+                        break  # rodapé da página
+                    if esq and REGEX_INICIO_ITEM.match(esq):
+                        campo_estruturado = False
+                    if esq:
+                        saida.append(esq)
+                    if not dir_:
+                        continue
+                    if re.match(r"^(Representante:|Destino:|Transp:)", dir_, re.IGNORECASE):
+                        campo_estruturado = True
+                    if campo_estruturado:
+                        saida.append(dir_)
+                    else:
+                        saida.append(f"{MARCADOR_OBS}{dir_}")
+        return saida
+
+    def _extrair_linhas_texto_corrido(self) -> list[str]:
+        """Modo antigo: texto corrido; prefere sem layout quando preserva melhor as colunas."""
         linhas_sem_layout: list[str] = []
         linhas_com_layout: list[str] = []
 
@@ -315,7 +402,9 @@ class ExtratorPDF:
     def _parsear_bloco(self, bloco: list[str]) -> PedidoFaturamento:
         """Parseia um bloco de linhas em um PedidoFaturamento."""
         pedido = PedidoFaturamento()
-        pedido.bloco_bruto = "\n".join(bloco)
+        pedido.bloco_bruto = "\n".join(l.replace(MARCADOR_OBS, "[OBS] ") for l in bloco)
+        obs_coluna = [l[len(MARCADOR_OBS):].strip() for l in bloco if l.startswith(MARCADOR_OBS)]
+        bloco = [l for l in bloco if not l.startswith(MARCADOR_OBS)]
 
         try:
             primeira = bloco[0]
@@ -390,11 +479,27 @@ class ExtratorPDF:
                 except Exception:
                     continue
 
+            if not pedido.cidade_destino:
+                # Texto sobreposto no PDF pode "engolir" o rótulo Destino:
+                # (ex.: "27D87e,s7t5ino:"). A linha CIDADE - UF antes de Transp: resolve.
+                for idx, linha in enumerate(bloco):
+                    if linha.startswith("Transp:") and idx > 0:
+                        m = re.match(r"^([A-ZÀ-Ú][A-ZÀ-Ú' .]+?)\s+-\s+([A-ZÀ-Ú ]+)$", bloco[idx - 1].strip())
+                        if m:
+                            pedido.cidade = m.group(1).strip()
+                            pedido.estado = m.group(2).strip()
+                            pedido.cidade_destino = normalizar_texto(pedido.cidade)
+                            pedido.estado_destino = normalizar_texto(pedido.estado)
+                        break
+
             rep_match = REGEX_REPRESENTANTE.search(texto_bloco)
             if rep_match:
                 pedido.representante = normalizar_texto(rep_match.group(2))
 
-            pedido.observacao_comercial = self._extrair_observacao(bloco)
+            if obs_coluna:
+                pedido.observacao_comercial = re.sub(r"\s+", " ", " ".join(obs_coluna)).strip()
+            elif not self._ultimo_modo_colunas:
+                pedido.observacao_comercial = self._extrair_observacao(bloco)
             pedido.descricao_item = self._enriquecer_descricao(bloco, pedido.descricao_item)
 
             desc_upper = normalizar_texto(pedido.descricao_item)
@@ -464,7 +569,7 @@ class ExtratorPDF:
             if not nome:
                 return "", resto_primeira.strip(), of_ano
 
-            nome = re.split(r"\s+\d{6}/\d{2}\b", nome)[0]
+            nome = re.split(r"\s*\d{6}/\d{2}\b", nome)[0]
             nome = re.split(r"\s+\d[\d.,]*\s*KG", nome, flags=re.I)[0]
             nome = re.split(r"\s+\d{2}/\d{2}/\d{2}\b", nome)[0]
             nome = re.sub(r"\s+", " ", nome).strip()
