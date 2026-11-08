@@ -1,4 +1,5 @@
 """Geocodificação com cache/correção manual e sequência de entrega (OR-Tools)."""
+from __future__ import annotations
 
 import pytest
 

@@ -1,4 +1,5 @@
 """Garante que o servidor entrega .js/.css com o tipo certo (bug do registro do Windows)."""
+from __future__ import annotations
 import mimetypes
 
 import api.main  # noqa: F401  (registra os tipos)

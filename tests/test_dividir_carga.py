@@ -4,6 +4,7 @@ Divisão de uma linha entre caminhões, só por peso.
 Ex.: pedido de 10 t e caminhões de no máximo ~6 t -> a linha vira 2 cargas.
 Materiais: rolo, SPYDER, barras de até 6 m, carretéis — a divisão é por kg.
 """
+from __future__ import annotations
 
 from models import PedidoConsolidado
 from motor_logistica import MotorLogistica

@@ -6,6 +6,7 @@ O quadro do dia é do operador: o PDF só traz informação.
 - Segunda lista do dia / adicional: entra no mesmo quadro, na fila.
 - Pendência que volta: a linha sai do caminhão para "Parados".
 """
+from __future__ import annotations
 
 from models import PedidoConsolidado
 from motor_logistica import MotorLogistica

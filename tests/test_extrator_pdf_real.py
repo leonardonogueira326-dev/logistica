@@ -4,6 +4,7 @@ Testes com PDFs reais de faturamento.
 Os PDFs NÃO vão para o GitHub (dados de clientes). Coloque-os na pasta
 `dados_teste/` na raiz do projeto para rodar estes testes; sem eles, são pulados.
 """
+from __future__ import annotations
 
 from pathlib import Path
 

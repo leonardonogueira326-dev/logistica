@@ -1,4 +1,5 @@
 """Números que o operador vê precisam bater com o que o motor decide."""
+from __future__ import annotations
 
 from models import PedidoFaturamento
 from motor_ingestao import MotorIngestao
