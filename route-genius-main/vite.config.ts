@@ -11,8 +11,13 @@ export default defineConfig({
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
     server: { entry: "server" },
+    // Modo servidor da empresa: gera um index.html estático (SPA) que o
+    // FastAPI serve junto com a API — sem precisar do Node em produção.
+    spa: { enabled: true },
   },
   vite: {
+    // Prerender do modo SPA sobe um preview temporário: IPv4 fixo (funciona em qualquer rede)
+    preview: { host: "127.0.0.1" },
     server: {
       proxy: {
         "/api": {

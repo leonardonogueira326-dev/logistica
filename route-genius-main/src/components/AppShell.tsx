@@ -1,4 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { getStoredSessionId, setStoredSessionId } from "@/hooks/useLogisticaSession";
 import { Link, useRouterState } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import {
@@ -48,6 +50,64 @@ function StatusIA() {
       <span className={cn("inline-flex rounded-full h-2 w-2", online ? "bg-success" : "bg-muted-foreground/50")} />
       {data ? (online ? "IA local: ativa" : "IA local: desligada") : "IA local…"}
     </div>
+  );
+}
+
+type Quadro = {
+  session_id: string;
+  data_referencia: string;
+  solicitacoes: string[];
+  linhas: number;
+  conferido: boolean;
+  quadro_montado: boolean;
+};
+
+function dataBR(iso: string) {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso || "sem data";
+}
+
+/**
+ * Quadro do dia aberto neste PC. Os quadros ficam no SERVIDOR: qualquer PC
+ * escolhe aqui e vê o mesmo quadro. Sem quadro escolhido, abre o mais recente.
+ */
+function QuadroDoDia() {
+  const { data: quadros } = useQuery({
+    queryKey: ["quadros"],
+    queryFn: async () => {
+      const r = await fetch("/api/sessions?limite=15");
+      return (await r.json()) as Quadro[];
+    },
+    refetchInterval: 60_000,
+  });
+  const atual = getStoredSessionId();
+  useEffect(() => {
+    if (!atual && quadros && quadros.length) {
+      setStoredSessionId(quadros[0].session_id);
+      window.location.reload();
+    }
+  }, [atual, quadros]);
+  const abrir = (id: string) => {
+    setStoredSessionId(id);
+    window.location.reload();
+  };
+  const q = quadros?.find((x) => x.session_id === atual);
+  const rotulo = (x: Quadro) =>
+    `${dataBR(x.data_referencia)}${x.solicitacoes.length ? ` · sol. ${x.solicitacoes.map((s) => s.replace(/^0+/, "")).join(", ")}` : ""}`;
+  return (
+    <select
+      className="h-8 max-w-[300px] rounded-md border border-border bg-card px-2 text-xs"
+      title="Quadro do dia (fica no servidor — outro PC pode abrir o mesmo)"
+      value={atual ?? ""}
+      onChange={(e) => e.target.value && abrir(e.target.value)}
+    >
+      {!q && <option value="">{quadros?.length ? "Escolher quadro do dia…" : "Nenhum quadro ainda"}</option>}
+      {(quadros ?? []).map((x) => (
+        <option key={x.session_id} value={x.session_id}>
+          Quadro {rotulo(x)} · {x.linhas} linhas{x.quadro_montado ? "" : " · não montado"}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -104,6 +164,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6">
           <div className="flex items-center gap-3">
             <StatusIA />
+            <QuadroDoDia />
             <div className="text-xs text-muted-foreground hidden lg:block">
               Operação · {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" })}
             </div>
