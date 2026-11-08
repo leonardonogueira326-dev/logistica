@@ -9,7 +9,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { Truck, Inbox, PackageSearch, Loader2, AlertTriangle, CalendarClock, Download, MapPin, Clock, Lock, LockOpen } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { PedidoAuditSheet } from "@/components/logistica/PedidoAuditSheet";
 import { PedidoKanbanCard, getCardId, type CardPedido } from "@/components/logistica/PedidoKanbanCard";
@@ -42,6 +42,7 @@ import {
   MOTIVOS_BACKLOG,
   TEO_ALERTA_MIN,
   idRetornoVeiculo,
+  type EquipeVeiculo,
   type OperacaoDivisao,
   type Roteirizacao,
   type PedidoConsolidado,
@@ -54,6 +55,53 @@ type PendingMove = {
   destino: string;
   forcar?: boolean;
 };
+
+/** Motorista / ajudante / placa do caminhão no dia — salva quando o foco sai do grupo. */
+function EquipeEditor({
+  equipe,
+  onSalvar,
+}: {
+  equipe?: EquipeVeiculo;
+  onSalvar: (e: EquipeVeiculo) => Promise<void>;
+}) {
+  const vazio = { motorista: "", ajudante: "", placa: "" };
+  const [valor, setValor] = useState<EquipeVeiculo>({ ...vazio, ...(equipe ?? {}) });
+  const [editando, setEditando] = useState(false);
+  // Atualiza com o servidor só quando ninguém está digitando (senão apagaria o que foi digitado)
+  useEffect(() => {
+    if (!editando) setValor({ ...vazio, ...(equipe ?? {}) });
+  }, [equipe?.motorista, equipe?.ajudante, equipe?.placa, editando]); // eslint-disable-line react-hooks/exhaustive-deps
+  const salvar = () => {
+    setEditando(false);
+    const atual = { ...vazio, ...(equipe ?? {}) };
+    if (valor.motorista !== atual.motorista || valor.ajudante !== atual.ajudante || valor.placa !== atual.placa) {
+      void onSalvar(valor);
+    }
+  };
+  const campo = (k: keyof EquipeVeiculo, rotulo: string) => (
+    <input
+      className="w-full rounded border border-input bg-background px-1.5 py-0.5 text-[11px] uppercase"
+      placeholder={rotulo}
+      title={rotulo}
+      value={valor[k]}
+      onFocus={() => setEditando(true)}
+      onChange={(e) => setValor((v) => ({ ...v, [k]: e.target.value }))}
+      onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+    />
+  );
+  return (
+    <div
+      className="mt-2 grid grid-cols-[1fr_1fr_72px] gap-1"
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) salvar();
+      }}
+    >
+      {campo("motorista", "Motorista")}
+      {campo("ajudante", "Ajudante")}
+      {campo("placa", "Placa")}
+    </div>
+  );
+}
 
 type AcoesDivisao = {
   dividir: (p: CardPedido) => void;
@@ -69,6 +117,7 @@ export function RouteKanbanBoard({
   onAntecipar,
   onDivisao,
   onFecharVeiculo,
+  onEquipe,
   onExportRomaneio,
   onHabilitarSegundaViagem,
   exportingCaminhaoId,
@@ -91,6 +140,7 @@ export function RouteKanbanBoard({
   }) => Promise<void>;
   onDivisao?: (operacao: OperacaoDivisao) => Promise<void>;
   onFecharVeiculo?: (veiculoId: string, fechado: boolean) => Promise<void>;
+  onEquipe?: (veiculoId: string, equipe: EquipeVeiculo) => Promise<void>;
   onExportRomaneio?: (caminhaoId: string) => Promise<void>;
   onHabilitarSegundaViagem?: (veiculoId: string) => Promise<void>;
   exportingCaminhaoId?: string | null;
@@ -466,6 +516,8 @@ export function RouteKanbanBoard({
               }
               onExportRomaneio={col.rota ? onExportRomaneio : undefined}
               fechado={!!col.rota && (data.veiculos_fechados ?? []).includes(col.id)}
+              equipe={col.rota && !col.isRetorno ? data.equipe_por_veiculo?.[col.id] : undefined}
+              onSalvarEquipe={col.rota && !col.isRetorno && onEquipe ? (e: EquipeVeiculo) => onEquipe(col.id, e) : undefined}
               onToggleFechar={
                 col.rota && !col.isRetorno && onFecharVeiculo
                   ? () => void onFecharVeiculo(col.id, !(data.veiculos_fechados ?? []).includes(col.id))
@@ -751,6 +803,8 @@ function KanbanColumn({
   veiculoBaseId,
   fechado,
   onToggleFechar,
+  equipe,
+  onSalvarEquipe,
 }: {
   id: string;
   title: string;
@@ -774,6 +828,8 @@ function KanbanColumn({
   veiculoBaseId?: string;
   fechado?: boolean;
   onToggleFechar?: () => void;
+  equipe?: EquipeVeiculo;
+  onSalvarEquipe?: (e: EquipeVeiculo) => Promise<void>;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id, data: { columnId: id } });
 
@@ -868,6 +924,7 @@ function KanbanColumn({
         {fechado && (
           <div className="mt-1 text-[11px] font-medium text-amber-700">Fechado — a sugestão não mexe</div>
         )}
+        {onSalvarEquipe && <EquipeEditor equipe={equipe} onSalvar={onSalvarEquipe} />}
         {variant === "futuro" && (
           <div className="mt-1 text-[11px] text-muted-foreground">
             Aguardando representante, comercial ou peso — veja em Pendências / Representante

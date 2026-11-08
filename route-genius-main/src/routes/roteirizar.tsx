@@ -26,7 +26,7 @@ export const Route = createFileRoute("/roteirizar")({
 
 function RoteirizarPage() {
   const sessionId = getStoredSessionId();
-  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, recomecarMutation, fecharMutation, moverMutation, anteciparMutation, segundaViagemMutation, dividirMutation } =
+  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, recomecarMutation, fecharMutation, equipeMutation, moverMutation, anteciparMutation, segundaViagemMutation, dividirMutation } =
     useLogisticaSession(sessionId);
   const [lastWarning, setLastWarning] = useState("");
   const [confirmarRecomeco, setConfirmarRecomeco] = useState(false);
@@ -73,6 +73,11 @@ function RoteirizarPage() {
 
   const data = roteirizacaoQuery.data ?? roteirizarMutation.data;
   const mensagemQuadro = roteirizarMutation.data?.mensagem || recomecarMutation.data?.mensagem || "";
+
+  const handleEquipe = async (veiculoId: string, equipe: { motorista: string; ajudante: string; placa: string }) => {
+    if (!sessionId) return;
+    await equipeMutation.mutateAsync({ sid: sessionId, veiculoId, equipe });
+  };
 
   const handleFecharVeiculo = async (veiculoId: string, fechado: boolean) => {
     if (!sessionId) return;
@@ -248,6 +253,7 @@ function RoteirizarPage() {
               onMove={handleMove}
               onDivisao={handleDivisao}
               onFecharVeiculo={handleFecharVeiculo}
+              onEquipe={handleEquipe}
               onAntecipar={handleAntecipar}
               onExportRomaneio={handleExportRomaneioCaminhao}
               exportingCaminhaoId={exportingCaminhaoId}
