@@ -129,6 +129,8 @@ class ItemRotaSchema(BaseModel):
     id_carga: str = ""
     id_item: str = ""
     of_ano: str = ""
+    parte: str = ""
+    peso_total_linha: float = 0.0
     cliente: str = ""
     cliente_codigo: str = ""
     representante: str = ""
@@ -183,6 +185,11 @@ class MoverPedidoSchema(BaseModel):
     destino: str
     motivo: str = ""
     forcar: bool = False
+
+
+class DividirCargaSchema(BaseModel):
+    id_carga: str
+    peso_kg: float = Field(gt=0, description="Peso da nova parte; o restante fica na carga original.")
 
 
 class MoverPedidoResponseSchema(BaseModel):

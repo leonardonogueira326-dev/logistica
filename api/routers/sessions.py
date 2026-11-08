@@ -22,6 +22,7 @@ from api.schemas import (  # noqa: E402
     ConsolidadoPatchSchema,
     ConsolidadosListSchema,
     IngestaoResponseSchema,
+    DividirCargaSchema,
     MoverPedidoSchema,
     MoverPedidoResponseSchema,
     PedidoConsolidadoSchema,
@@ -515,6 +516,26 @@ def mover_pedido(session_id: str, body: MoverPedidoSchema) -> MoverPedidoRespons
     )
 
 
+@router.post("/{session_id}/dividir", response_model=MoverPedidoResponseSchema)
+def dividir_carga(session_id: str, body: DividirCargaSchema) -> MoverPedidoResponseSchema:
+    """Divide uma carga por peso; a nova parte fica na mesma coluna."""
+    data = store.load_roteirizacao(session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Roteirização não executada.")
+
+    motor = _motor_from_roteirizacao(data)
+    ok, mensagem = motor.dividir_carga(body.id_carga, body.peso_kg)
+    if not ok:
+        raise HTTPException(status_code=400, detail=mensagem)
+
+    store.save_roteirizacao(session_id, motor.para_dict())
+    return MoverPedidoResponseSchema(
+        ok=True,
+        warning=mensagem,
+        roteirizacao=_roteirizacao_from_motor(motor, session_id),
+    )
+
+
 @router.post("/{session_id}/antecipar", response_model=AnteciparPedidoResponseSchema)
 def antecipar_pedido(
     session_id: str,
@@ -607,4 +628,5 @@ def _dict_to_rota(data: dict[str, Any]):
 def _dict_to_item(data: dict[str, Any]):
     from models import ItemRota
 
-    return ItemRota(**{k: data.get(k, "") for k in ItemRota.__dataclass_fields__})
+    campos = ItemRota.__dataclass_fields__
+    return ItemRota(**{k: data.get(k, campos[k].default) for k in campos})

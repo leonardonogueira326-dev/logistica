@@ -11,7 +11,7 @@ from typing import Any
 
 import config
 from models import ItemRota, PedidoConsolidado, RotaVeiculo
-from normalizador import normalizar_texto, resolver_rota_logistica
+from normalizador import formatar_kg, normalizar_texto, resolver_rota_logistica
 from param_manager import carregar_parametros, rotulo_rota
 
 
@@ -22,6 +22,17 @@ def _cid(obj: Any) -> str:
     return str(
         getattr(obj, "id_carga", "") or getattr(obj, "id_item", "") or getattr(obj, "numero_pedido", "")
     )
+
+
+def _float(valor: Any) -> float:
+    try:
+        return float(valor or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _id_parte(id_item: str, n: int) -> str:
+    return f"{id_item}@P{n}"
 
 
 def _mesma_carga(obj: Any, chave: str) -> bool:
@@ -285,8 +296,9 @@ class MotorLogistica:
         self.itens_retorno_por_veiculo = {}
         self.viagens_retorno_habilitadas = []
         pedidos = self.carregar_pedidos(consolidados)
-        clusters = self._agrupar_por_rota(pedidos)
         veiculos_ordem = self._ordem_veiculos(ativar_reserva)
+        pedidos = self._dividir_excedentes(pedidos, veiculos_ordem)
+        clusters = self._agrupar_por_rota(pedidos)
 
         estados: list[EstadoVeiculo] = []
         alocados_ids: set[str] = set()
@@ -328,6 +340,8 @@ class MotorLogistica:
                             "id_carga": _cid(p),
                             "id_item": p.get("id_item", ""),
                             "of_ano": p.get("of_ano", ""),
+                            "parte": str(p.get("parte", "")),
+                            "peso_total_linha": str(p.get("peso_total_linha", "") or ""),
                             "cliente": p["cliente"],
                             "representante": p["representante"],
                             "cidade_destino": p["cidade_destino"],
@@ -344,6 +358,156 @@ class MotorLogistica:
         }
         self._calcular_oportunidades()
         return self.rotas, self.backlog
+
+    def _dividir_excedentes(
+        self,
+        pedidos: list[dict[str, Any]],
+        veiculos_ordem: list[tuple[str, dict]],
+    ) -> list[dict[str, Any]]:
+        """
+        Divide por peso as linhas que não cabem inteiras em nenhum caminhão.
+
+        Ex.: 10 t com caminhões de no máximo 6 t -> 2 partes de 5 t. As partes
+        são iguais (o operador ajusta depois com "Dividir carga" no Kanban) e
+        herdam as restrições da linha (SYDER, dimensão longa...).
+        """
+        caps_todos = [float(v.get("capacidade_peso", 0)) for _, v in veiculos_ordem]
+        caps_syder = [
+            float(v.get("capacidade_peso", 0)) for _, v in veiculos_ordem if v.get("tipo") == "SYDER"
+        ]
+        resultado: list[dict[str, Any]] = []
+        for p in pedidos:
+            exige_syder = p.get("exige_syder") == "SIM" or p.get("is_dimensao_longa") == "SIM"
+            caps = caps_syder if exige_syder else caps_todos
+            cap_max = max(caps) if caps else 0.0
+            peso = _float(p.get("peso_kg"))
+            if cap_max <= 0 or peso <= cap_max:
+                resultado.append(p)
+                continue
+            n_partes = int(-(-peso // cap_max))  # teto
+            base = round(peso / n_partes, 1)
+            id_item = p.get("id_item") or _cid(p)
+            for n in range(1, n_partes + 1):
+                parte = dict(p)
+                parte["peso_kg"] = base if n < n_partes else round(peso - base * (n_partes - 1), 1)
+                parte["id_carga"] = _id_parte(id_item, n)
+                parte["id_item"] = id_item
+                parte["parte"] = f"{n}/{n_partes}"
+                parte["peso_total_linha"] = peso
+                resultado.append(parte)
+        return resultado
+
+    def _localizar_carga(self, id_carga: str) -> tuple[str, Any] | None:
+        """Retorna (coluna, objeto) da carga: ItemRota nos veículos, dict nos backlogs."""
+        for vid, itens in self.itens_por_veiculo.items():
+            for item in itens:
+                if _mesma_carga(item, id_carga):
+                    return vid, item
+        for vid, itens in self.itens_retorno_por_veiculo.items():
+            for item in itens:
+                if _mesma_carga(item, id_carga):
+                    return self._id_retorno(vid), item
+        for nome, lista in (
+            ("BACKLOG", self.backlog),
+            (config.COD_BACKLOG_FUTURO, self.backlog_futuro),
+            (config.COD_BACKLOG_LOCAL, self.backlog_local),
+            ("COLETAS", self.coletas),
+        ):
+            for entry in lista:
+                if _mesma_carga(entry, id_carga):
+                    return nome, entry
+        return None
+
+    def _todas_as_cargas(self) -> list[Any]:
+        cargas: list[Any] = []
+        for itens in list(self.itens_por_veiculo.values()) + list(self.itens_retorno_por_veiculo.values()):
+            cargas.extend(itens)
+        for lista in (self.backlog, self.backlog_futuro, self.backlog_local, self.coletas):
+            cargas.extend(lista)
+        return cargas
+
+    def dividir_carga(self, id_carga: str, peso_nova_parte: float) -> tuple[bool, str]:
+        """
+        Divide uma carga em duas, por peso. A nova parte fica na MESMA coluna;
+        o operador arrasta para outro caminhão. Pode ser repetido (3, 4 partes...).
+        """
+        achado = self._localizar_carga(id_carga)
+        if not achado:
+            return False, f"Carga {id_carga} não encontrada."
+        coluna, obj = achado
+        eh_dict = isinstance(obj, dict)
+        peso_atual = _float(obj.get("peso_kg") if eh_dict else obj.peso_kg)
+        peso_nova_parte = round(float(peso_nova_parte), 1)
+        if peso_nova_parte <= 0 or peso_nova_parte >= peso_atual:
+            return False, (
+                f"Informe um peso entre 0 e {formatar_kg(peso_atual)} kg (peso atual desta carga)."
+            )
+
+        get = obj.get if eh_dict else (lambda k, d="": getattr(obj, k, d))
+        id_item = get("id_item", "") or _cid(obj).split("@P")[0]
+        irmas = [c for c in self._todas_as_cargas() if (
+            (c.get("id_item") if isinstance(c, dict) else c.id_item) == id_item
+        )]
+        total = sum(_float(c.get("peso_kg") if isinstance(c, dict) else c.peso_kg) for c in irmas) or peso_atual
+        usados = {_cid(c) for c in irmas}
+        n = 1
+        while _id_parte(id_item, n) in usados:
+            n += 1
+        # A carga original também passa a ser uma "parte" se ainda não era.
+        if "@P" not in _cid(obj):
+            novo_id_original = _id_parte(id_item, n)
+            n += 1
+            if eh_dict:
+                obj["id_carga"] = novo_id_original
+            else:
+                obj.id_carga = novo_id_original
+        id_nova = _id_parte(id_item, n)
+
+        restante = round(peso_atual - peso_nova_parte, 1)
+        if eh_dict:
+            nova = dict(obj)
+            obj["peso_kg"] = str(restante)
+            nova["peso_kg"] = str(peso_nova_parte)
+            nova["id_carga"] = id_nova
+            nova["id_item"] = id_item
+            lista = {
+                "BACKLOG": self.backlog,
+                config.COD_BACKLOG_FUTURO: self.backlog_futuro,
+                config.COD_BACKLOG_LOCAL: self.backlog_local,
+                "COLETAS": self.coletas,
+            }[coluna]
+            lista.append(nova)
+        else:
+            obj.peso_kg = restante
+            nova = ItemRota(**{**asdict(obj), "peso_kg": peso_nova_parte, "id_carga": id_nova, "id_item": id_item})
+            retorno_vid = self._parse_retorno_destino(coluna)
+            if retorno_vid:
+                self.itens_retorno_por_veiculo[retorno_vid].append(nova)
+                self.recalcular_metricas_retorno(retorno_vid)
+            else:
+                self.itens_por_veiculo[coluna].append(nova)
+                self.recalcular_metricas(coluna)
+
+        self._renumerar_partes(id_item, total)
+        return True, (
+            f"Carga dividida: {formatar_kg(restante)} kg + {formatar_kg(peso_nova_parte)} kg. "
+            "Arraste a nova parte para outro caminhão."
+        )
+
+    def _renumerar_partes(self, id_item: str, total: float) -> None:
+        partes = [
+            c for c in self._todas_as_cargas()
+            if (c.get("id_item") if isinstance(c, dict) else c.id_item) == id_item
+        ]
+        partes.sort(key=lambda c: _cid(c))
+        for i, c in enumerate(partes, 1):
+            rotulo = f"{i}/{len(partes)}" if len(partes) > 1 else ""
+            if isinstance(c, dict):
+                c["parte"] = rotulo
+                c["peso_total_linha"] = str(total)
+            else:
+                c.parte = rotulo
+                c.peso_total_linha = total
 
     def pode_alocar(
         self, pedido: dict[str, Any], estado: EstadoVeiculo
@@ -540,6 +704,8 @@ class MotorLogistica:
             id_carga=_cid(pedido),
             id_item=str(pedido.get("id_item", "")),
             of_ano=str(pedido.get("of_ano", "")),
+            parte=str(pedido.get("parte", "") or ""),
+            peso_total_linha=_float(pedido.get("peso_total_linha")),
             cliente=pedido["cliente"],
             cliente_codigo=pedido.get("cliente_codigo", ""),
             representante=pedido.get("representante", ""),
@@ -831,6 +997,8 @@ class MotorLogistica:
                     "id_carga": _cid(pedido_dict),
                     "id_item": pedido_dict.get("id_item", ""),
                     "of_ano": pedido_dict.get("of_ano", ""),
+                    "parte": str(pedido_dict.get("parte", "")),
+                    "peso_total_linha": str(pedido_dict.get("peso_total_linha", "") or ""),
                     "cliente": pedido_dict.get("cliente", ""),
                     "representante": pedido_dict.get("representante", ""),
                     "cidade_destino": pedido_dict.get("cidade_destino", ""),
@@ -846,6 +1014,8 @@ class MotorLogistica:
                     "id_carga": _cid(pedido_dict),
                     "id_item": pedido_dict.get("id_item", ""),
                     "of_ano": pedido_dict.get("of_ano", ""),
+                    "parte": str(pedido_dict.get("parte", "")),
+                    "peso_total_linha": str(pedido_dict.get("peso_total_linha", "") or ""),
                     "cliente": pedido_dict.get("cliente", ""),
                     "cliente_codigo": pedido_dict.get("cliente_codigo", ""),
                     "representante": pedido_dict.get("representante", ""),
@@ -868,6 +1038,8 @@ class MotorLogistica:
                     "id_carga": _cid(pedido_dict),
                     "id_item": pedido_dict.get("id_item", ""),
                     "of_ano": pedido_dict.get("of_ano", ""),
+                    "parte": str(pedido_dict.get("parte", "")),
+                    "peso_total_linha": str(pedido_dict.get("peso_total_linha", "") or ""),
                     "cliente": pedido_dict.get("cliente", ""),
                     "cliente_codigo": pedido_dict.get("cliente_codigo", ""),
                     "representante": pedido_dict.get("representante", ""),
@@ -890,6 +1062,8 @@ class MotorLogistica:
                     "id_carga": _cid(pedido_dict),
                     "id_item": pedido_dict.get("id_item", ""),
                     "of_ano": pedido_dict.get("of_ano", ""),
+                    "parte": str(pedido_dict.get("parte", "")),
+                    "peso_total_linha": str(pedido_dict.get("peso_total_linha", "") or ""),
                     "cliente": pedido_dict.get("cliente", ""),
                     "representante": pedido_dict.get("representante", ""),
                     "cidade_destino": pedido_dict.get("cidade_destino", ""),
@@ -1026,6 +1200,8 @@ class MotorLogistica:
                 "id_carga": _cid(pedido_dict),
                 "id_item": pedido_dict.get("id_item", ""),
                 "of_ano": pedido_dict.get("of_ano", ""),
+                "parte": str(pedido_dict.get("parte", "")),
+                "peso_total_linha": str(pedido_dict.get("peso_total_linha", "") or ""),
                 "cliente": pedido_dict.get("cliente", ""),
                 "representante": pedido_dict.get("representante", ""),
                 "cidade_destino": pedido_dict.get("cidade_destino", ""),
@@ -1049,6 +1225,8 @@ class MotorLogistica:
             "id_carga": _cid(entry),
             "id_item": entry.get("id_item", ""),
             "of_ano": entry.get("of_ano", ""),
+            "parte": str(entry.get("parte", "")),
+            "peso_total_linha": str(entry.get("peso_total_linha", "") or ""),
             "cliente": entry.get("cliente", ""),
             "cliente_codigo": entry.get("cliente_codigo", ""),
             "representante": entry.get("representante", ""),
