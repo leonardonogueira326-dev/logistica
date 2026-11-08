@@ -79,3 +79,6 @@ data/equipe_padrao.json
 # Coordenadas dos clientes (cache de geocodificacao)
 data/geocache.json
 data/geocache.tmp
+
+# Logs locais (build/execucao)
+logs/
