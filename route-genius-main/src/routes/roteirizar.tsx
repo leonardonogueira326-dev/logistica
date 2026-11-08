@@ -35,8 +35,9 @@ function RoteirizarPage() {
   const consolidadosByPedido = useMemo(() => {
     const map: Record<string, PedidoConsolidado> = {};
     consolidadosQuery.data?.consolidados.forEach((c) => {
-      map[c.numero_pedido] = c;
-      if (c.numero_pedido_norm) map[c.numero_pedido_norm] = c;
+      if (!map[c.numero_pedido]) map[c.numero_pedido] = c;
+      if (c.numero_pedido_norm && !map[c.numero_pedido_norm]) map[c.numero_pedido_norm] = c;
+      if (c.id_item) map[c.id_item] = c;
     });
     return map;
   }, [consolidadosQuery.data]);

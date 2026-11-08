@@ -4,6 +4,7 @@ import {
   COLUMN_BACKLOG_LOCAL,
   COLUMN_COLETAS,
   SUFIXO_VIAGEM_RETORNO,
+  idCarga,
   parseRetornoVeiculo,
   type ItemRota,
   type Roteirizacao,
@@ -11,17 +12,17 @@ import {
 
 function findPedidoLocation(data: Roteirizacao, numeroPedido: string): string | null {
   for (const [vid, itens] of Object.entries(data.itens_por_veiculo)) {
-    if (itens.some((i) => i.numero_pedido === numeroPedido)) return vid;
+    if (itens.some((i) => idCarga(i) === numeroPedido)) return vid;
   }
   for (const [vid, itens] of Object.entries(data.itens_retorno_por_veiculo ?? {})) {
-    if (itens.some((i) => i.numero_pedido === numeroPedido)) {
+    if (itens.some((i) => idCarga(i) === numeroPedido)) {
       return `${vid}${SUFIXO_VIAGEM_RETORNO}`;
     }
   }
-  if ((data.backlog_futuro ?? []).some((b) => b.numero_pedido === numeroPedido)) return COLUMN_BACKLOG_FUTURO;
-  if ((data.backlog_local ?? []).some((b) => b.numero_pedido === numeroPedido)) return COLUMN_BACKLOG_LOCAL;
-  if (data.backlog.some((b) => b.numero_pedido === numeroPedido)) return COLUMN_BACKLOG;
-  if ((data.coletas ?? []).some((c) => c.numero_pedido === numeroPedido)) return COLUMN_COLETAS;
+  if ((data.backlog_futuro ?? []).some((b) => idCarga(b) === numeroPedido)) return COLUMN_BACKLOG_FUTURO;
+  if ((data.backlog_local ?? []).some((b) => idCarga(b) === numeroPedido)) return COLUMN_BACKLOG_LOCAL;
+  if (data.backlog.some((b) => idCarga(b) === numeroPedido)) return COLUMN_BACKLOG;
+  if ((data.coletas ?? []).some((c) => idCarga(c) === numeroPedido)) return COLUMN_COLETAS;
   return null;
 }
 
@@ -31,28 +32,28 @@ function extractPedido(
   numeroPedido: string,
 ): ItemRota | Record<string, string> | null {
   if (origem === COLUMN_BACKLOG_FUTURO) {
-    const b = (data.backlog_futuro ?? []).find((x) => x.numero_pedido === numeroPedido);
+    const b = (data.backlog_futuro ?? []).find((x) => idCarga(x) === numeroPedido);
     return b ?? null;
   }
   if (origem === COLUMN_BACKLOG_LOCAL) {
-    const b = (data.backlog_local ?? []).find((x) => x.numero_pedido === numeroPedido);
+    const b = (data.backlog_local ?? []).find((x) => idCarga(x) === numeroPedido);
     return b ?? null;
   }
   if (origem === COLUMN_BACKLOG) {
-    const b = data.backlog.find((x) => x.numero_pedido === numeroPedido);
+    const b = data.backlog.find((x) => idCarga(x) === numeroPedido);
     return b ?? null;
   }
   if (origem === COLUMN_COLETAS) {
-    const c = (data.coletas ?? []).find((x) => x.numero_pedido === numeroPedido);
+    const c = (data.coletas ?? []).find((x) => idCarga(x) === numeroPedido);
     return c ?? null;
   }
   const retornoVid = parseRetornoVeiculo(origem);
   if (retornoVid) {
     const itens = data.itens_retorno_por_veiculo?.[retornoVid] ?? [];
-    return itens.find((i) => i.numero_pedido === numeroPedido) ?? null;
+    return itens.find((i) => idCarga(i) === numeroPedido) ?? null;
   }
   const itens = data.itens_por_veiculo[origem] ?? [];
-  return itens.find((i) => i.numero_pedido === numeroPedido) ?? null;
+  return itens.find((i) => idCarga(i) === numeroPedido) ?? null;
 }
 
 function toItemRota(p: ItemRota | Record<string, string>): ItemRota {
@@ -108,20 +109,20 @@ export function optimisticMoveRoteirizacao(
     !retornoOrigem
   ) {
     next.itens_por_veiculo[origem] = (next.itens_por_veiculo[origem] ?? []).filter(
-      (i) => i.numero_pedido !== numeroPedido,
+      (i) => idCarga(i) !== numeroPedido,
     );
   } else if (retornoOrigem) {
     next.itens_retorno_por_veiculo[retornoOrigem] = (
       next.itens_retorno_por_veiculo[retornoOrigem] ?? []
-    ).filter((i) => i.numero_pedido !== numeroPedido);
+    ).filter((i) => idCarga(i) !== numeroPedido);
   } else if (origem === COLUMN_BACKLOG_FUTURO) {
-    next.backlog_futuro = next.backlog_futuro.filter((b) => b.numero_pedido !== numeroPedido);
+    next.backlog_futuro = next.backlog_futuro.filter((b) => idCarga(b) !== numeroPedido);
   } else if (origem === COLUMN_BACKLOG_LOCAL) {
-    next.backlog_local = next.backlog_local.filter((b) => b.numero_pedido !== numeroPedido);
+    next.backlog_local = next.backlog_local.filter((b) => idCarga(b) !== numeroPedido);
   } else if (origem === COLUMN_BACKLOG) {
-    next.backlog = next.backlog.filter((b) => b.numero_pedido !== numeroPedido);
+    next.backlog = next.backlog.filter((b) => idCarga(b) !== numeroPedido);
   } else {
-    next.coletas = next.coletas.filter((c) => c.numero_pedido !== numeroPedido);
+    next.coletas = next.coletas.filter((c) => idCarga(c) !== numeroPedido);
   }
 
   const item = toItemRota(pedido);

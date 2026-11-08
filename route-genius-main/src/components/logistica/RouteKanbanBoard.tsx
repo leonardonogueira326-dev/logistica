@@ -184,8 +184,10 @@ export function RouteKanbanBoard({
       const card = items.find((p) => getCardId(p) === auditPedidoId);
       if (card) {
         return {
-          numero_pedido: getCardId(card),
-          numero_pedido_norm: getCardId(card),
+          numero_pedido: String(card.numero_pedido ?? ""),
+          numero_pedido_norm: String(card.numero_pedido ?? ""),
+          id_item: String((card as Record<string, string>).id_item ?? getCardId(card)),
+          of_ano: String((card as Record<string, string>).of_ano ?? ""),
           cliente: String(card.cliente ?? ""),
           cliente_codigo: String(card.cliente_codigo ?? ""),
           peso_kg: Number(card.peso_kg ?? 0),
