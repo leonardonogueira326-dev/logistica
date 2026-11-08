@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { getStoredSessionId, setStoredSessionId } from "@/hooks/useLogisticaSession";
 import { Link, useRouterState } from "@tanstack/react-router";
 import type { ReactNode } from "react";
@@ -113,6 +113,10 @@ function QuadroDoDia() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // A página-base do modo servidor é pré-gerada em "/": depois de abrir, o menu
+  // é redesenhado (key) para marcar a tela certa.
+  const [montado, setMontado] = useState(false);
+  useEffect(() => setMontado(true), []);
 
   return (
     <div className="flex min-h-screen w-full bg-background text-foreground">
@@ -130,7 +134,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
         </div>
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        <nav key={montado ? pathname : "pre"} className="flex-1 px-3 py-4 space-y-1">
           <div className="px-3 pb-2 text-[10px] uppercase tracking-widest text-sidebar-foreground/50">
             Operação
           </div>
