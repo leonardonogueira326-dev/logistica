@@ -42,8 +42,11 @@ export async function uploadSession(files: {
   pdf?: File;
   xlsb?: File;
   msg?: File;
+  /** Adicionar ao quadro do dia desta sessão (segunda lista / adicional) */
+  sessionId?: string | null;
 }): Promise<UploadResponse> {
   const form = new FormData();
+  if (files.sessionId) form.append("session_id", files.sessionId);
   if (files.pdf) form.append("pdf", files.pdf);
   if (files.xlsb) form.append("xlsb", files.xlsb);
   if (files.msg) form.append("msg", files.msg);
@@ -51,6 +54,25 @@ export async function uploadSession(files: {
   return request<UploadResponse>("/sessions/upload", {
     method: "POST",
     body: form,
+  });
+}
+
+/** Fecha/reabre um caminhão: a sugestão automática não mexe em caminhão fechado. */
+export async function fecharVeiculo(
+  sessionId: string,
+  veiculoId: string,
+  fechado: boolean,
+): Promise<MoverPedidoResponse> {
+  return request<MoverPedidoResponse>(
+    `/sessions/${sessionId}/veiculos/${encodeURIComponent(veiculoId)}/fechar`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fechado }) },
+  );
+}
+
+/** Primeira vez monta o quadro; depois só sugere (não desfaz). recomecar=true refaz do zero. */
+export async function roteirizarQuadro(sessionId: string, recomecar = false): Promise<Roteirizacao> {
+  return request<Roteirizacao>(`/sessions/${sessionId}/roteirizar${recomecar ? "?recomecar=true" : ""}`, {
+    method: "POST",
   });
 }
 

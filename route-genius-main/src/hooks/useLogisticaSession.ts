@@ -15,6 +15,8 @@ import {
   moverPedido,
   patchConsolidado,
   roteirizar,
+  roteirizarQuadro,
+  fecharVeiculo,
   uploadSession,
 } from "@/lib/api-client";
 import type { AnteciparPedidoBody, ConsolidadoPatch, ConsultaRepresentanteRequest, LiberacaoComercialRequest, OperacaoDivisao, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
@@ -84,6 +86,22 @@ export function useLogisticaSession(sessionId: string | null) {
     mutationFn: roteirizar,
     onSuccess: (data, sid) => {
       queryClient.setQueryData(["roteirizacao", sid], data);
+    },
+  });
+
+  /** Apaga o quadro do dia e monta tudo de novo (pede confirmação na tela). */
+  const recomecarMutation = useMutation({
+    mutationFn: (sid: string) => roteirizarQuadro(sid, true),
+    onSuccess: (data, sid) => {
+      queryClient.setQueryData(["roteirizacao", sid], data);
+    },
+  });
+
+  const fecharMutation = useMutation({
+    mutationFn: ({ sid, veiculoId, fechado }: { sid: string; veiculoId: string; fechado: boolean }) =>
+      fecharVeiculo(sid, veiculoId, fechado),
+    onSuccess: (data, { sid }) => {
+      queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
     },
   });
 
@@ -193,6 +211,8 @@ export function useLogisticaSession(sessionId: string | null) {
     ingestMutation,
     confirmMutation,
     roteirizarMutation,
+    recomecarMutation,
+    fecharMutation,
     moverMutation,
     anteciparMutation,
     dividirMutation,

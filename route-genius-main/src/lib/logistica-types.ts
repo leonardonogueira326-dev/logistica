@@ -90,10 +90,12 @@ export interface UploadResponse {
   session_id: string;
   files_saved: string[];
   warnings: string[];
+  adicionado_ao_quadro?: boolean;
 }
 
 export interface IngestaoResponse {
   session_id: string;
+  linhas_novas?: number;
   resumo: ResumoIngestao;
   consolidados: PedidoConsolidado[];
   avisos: string[];
@@ -210,6 +212,10 @@ export interface RotaVeiculo {
 }
 
 export interface Roteirizacao {
+  /** Caminhões fechados pelo operador (a sugestão não mexe) */
+  veiculos_fechados?: string[];
+  /** Resultado da última sugestão/montagem */
+  mensagem?: string;
   session_id: string;
   rotas: RotaVeiculo[];
   itens_por_veiculo: Record<string, ItemRota[]>;
