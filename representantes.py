@@ -8,12 +8,14 @@ e pode ser diferente do destino de entrega do PDF.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 from normalizador import normalizar_codigo_cliente, normalizar_texto
 
 RAIZ = Path(__file__).resolve().parent
+ARQUIVO_APRENDIDOS = RAIZ / "data" / "representantes_aprendidos.json"
 NOMES_BASE = ("base-de-clientes.xlsx", "base-de-clientes1.xlsx")
 
 _cache: dict[str, tuple[float, dict[str, dict[str, str]]]] = {}
@@ -84,3 +86,31 @@ def limpar_representante_pdf(texto: str) -> str:
     nome = re.split(r"\s+CONDI[CÇ][AÃ]O\b|\s+PARCELAS\b|\s+DESTINO\b|\s+TRANSP\b", nome)[0]
     nome = re.sub(r"\s*\([^)]*\)\s*", " ", nome)
     return re.sub(r"\s+", " ", nome).strip(" -")
+
+
+def carregar_aprendidos() -> dict[str, str]:
+    """Correções feitas pelo operador: codigo_cliente -> representante."""
+    try:
+        bruto = json.loads(ARQUIVO_APRENDIDOS.read_text(encoding="utf-8"))
+        return {k: v for k, v in bruto.items() if not k.startswith("_") and isinstance(v, str)}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def aprender_representante(codigo_cliente: str, representante: str) -> bool:
+    """
+    O operador corrigiu o representante de um cliente: vale para as próximas
+    solicitações, por cima da base de clientes.
+    """
+    codigo = normalizar_codigo_cliente(codigo_cliente)
+    nome = normalizar_texto(representante or "")
+    if not codigo or not nome or nome == "NÃO IDENTIFICADO":
+        return False
+    dados = carregar_aprendidos()
+    if dados.get(codigo) == nome:
+        return False
+    dados[codigo] = nome
+    ARQUIVO_APRENDIDOS.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"_descricao": "Representante corrigido pelo operador (codigo_cliente -> nome)", **dict(sorted(dados.items()))}
+    ARQUIVO_APRENDIDOS.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return True

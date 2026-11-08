@@ -25,6 +25,8 @@ from api.schemas import (  # noqa: E402
     AjustarDivisaoSchema,
     CargaRefSchema,
     ConsultaRepresentanteBodySchema,
+    InformarPesoBodySchema,
+    LiberacaoComercialBodySchema,
     ConsultaRepresentanteResponseSchema,
     DividirCargaSchema,
     MoverPedidoSchema,
@@ -44,7 +46,9 @@ from models import PedidoConsolidado  # noqa: E402
 from motor_ingestao import MotorIngestao  # noqa: E402
 from motor_logistica import MotorLogistica  # noqa: E402
 import config  # noqa: E402
-from normalizador import mesma_linha, normalizar_texto, resolver_rota_logistica  # noqa: E402
+from normalizador import formatar_kg, mesma_linha, normalizar_texto, resolver_rota_logistica  # noqa: E402
+from pendencias import motivo_parado, pendencias as calc_pendencias  # noqa: E402
+from representantes import aprender_representante  # noqa: E402
 from param_manager import carregar_parametros  # noqa: E402
 from gerador_romaneio import (  # noqa: E402
     gerar_romaneio_caminhao_xlsx,
@@ -72,6 +76,45 @@ def _dict_to_consolidado(data: dict[str, Any]) -> PedidoConsolidado:
 
 def _consolidados_from_ingestao(data: dict[str, Any]) -> list[PedidoConsolidado]:
     return [_dict_to_consolidado(c) for c in data.get("consolidados", [])]
+
+
+def _limite_consulta() -> int:
+    return int(carregar_parametros().get("antecedencia_consulta_dias_uteis", 3))
+
+
+def _consolidado_com_pendencias(c: PedidoConsolidado, limite: int | None = None) -> PedidoConsolidadoSchema:
+    limite = _limite_consulta() if limite is None else limite
+    return PedidoConsolidadoSchema(
+        **asdict(c), pendencias=calc_pendencias(c, limite), motivo_parado=motivo_parado(c, limite)
+    )
+
+
+def _alocar_resolvidos(session_id: str, ids: list[str]) -> dict[str, str]:
+    """
+    Linhas que ficaram SEM pendência entram na rota de hoje (se a roteirização
+    já foi feita): vão para um caminhão compatível ou para a fila de hoje.
+    """
+    rote_data = store.load_roteirizacao(session_id)
+    if not rote_data or not ids:
+        return {}
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    limite = _limite_consulta()
+    motor = _motor_from_roteirizacao(rote_data)
+    nomes = {r.veiculo_id: r.veiculo_nome for r in motor.rotas}
+    alocados: dict[str, str] = {}
+    for id_linha in ids:
+        c = next((x for x in consolidados if mesma_linha(x, id_linha)), None)
+        if not c or calc_pendencias(c, limite):
+            continue
+        for entry in motor.backlog_futuro:
+            if mesma_linha(entry, id_linha):
+                entry["peso_kg"] = str(c.peso_kg)  # peso pode ter sido informado agora
+                entry["pendencias"] = ""
+        ok, _, destino = motor.antecipar_para_hoje(c.id_item or id_linha)
+        if ok:
+            alocados[id_linha] = nomes.get(destino, "fila de hoje")
+    store.save_roteirizacao(session_id, motor.para_dict())
+    return alocados
 
 
 def _get_active_consolidados(session_id: str) -> tuple[dict[str, Any], list[PedidoConsolidado], bool]:
@@ -236,7 +279,7 @@ def list_consolidados(session_id: str) -> ConsolidadosListSchema:
         session_id=session_id,
         validated=validated,
         resumo=resumo,
-        consolidados=[PedidoConsolidadoSchema(**asdict(c)) for c in consolidados],
+        consolidados=[_consolidado_com_pendencias(c) for c in consolidados],
         avisos=avisos if isinstance(avisos, list) else [],
     )
 
@@ -266,6 +309,11 @@ def patch_consolidado(
 
     item = ingest["consolidados"][found_idx]
     updates = patch.model_dump(exclude_none=True)
+
+    if updates.get("representante") and updates["representante"] != item.get("representante"):
+        # O sistema aprende: próximas solicitações deste cliente já vêm com este nome.
+        aprender_representante(item.get("cliente_codigo", ""), updates["representante"])
+        updates["representante"] = normalizar_texto(updates["representante"])
 
     for key, value in updates.items():
         item[key] = value
@@ -582,39 +630,97 @@ def registrar_consulta_representante(
         }
         if body.resultado == "LIBERADO":
             patch.update(
-                data_prevista_recebimento="",
                 representante_autorizou=quem or ref.representante,
                 motivo_adiantamento=f"Liberado pelo representante {quem or ref.representante}",
             )
             liberados.append(ref.id_item or id_linha)
-        elif ref.consulta_representante == "LIBERADO" and not ref.data_prevista_recebimento:
-            # voltou atrás: devolve a data de produção para ela ficar parada de novo
-            from dias_uteis import parse_data_br
-
-            prod = parse_data_br(ref.data_producao)
-            patch["data_prevista_recebimento"] = prod.isoformat() if prod else ""
+        if body.resultado == "PENDENTE":
+            patch["consulta_representante"] = ""
         if _patch_consolidado_session(session_id, ref.id_item or id_linha, patch):
             atualizados += 1
 
-    alocados: dict[str, str] = {}
+    alocados = _alocar_resolvidos(session_id, liberados)
     rote_data = store.load_roteirizacao(session_id)
-    if rote_data and liberados:
-        motor = _motor_from_roteirizacao(rote_data)
-        nomes = {r.veiculo_id: r.veiculo_nome for r in motor.rotas}
-        for id_linha in liberados:
-            ok, _, destino = motor.antecipar_para_hoje(id_linha)
-            if ok:
-                alocados[id_linha] = nomes.get(destino, "fila de hoje")
-        store.save_roteirizacao(session_id, motor.para_dict())
-
     msg = f"{atualizados} linha(s) marcada(s) como {rotulo.lower()}."
     if alocados:
         msg += " Entraram na rota: " + ", ".join(sorted(set(alocados.values()))) + "."
     elif liberados and not rote_data:
         msg += " Elas entram na rota na próxima roteirização."
+    elif liberados:
+        msg += " Algumas ainda têm outra pendência (comercial ou peso) e seguem paradas."
     return ConsultaRepresentanteResponseSchema(
         ok=atualizados > 0, atualizados=atualizados, message=msg, alocados=alocados
     )
+
+
+@router.post("/{session_id}/liberacao-comercial", response_model=ConsultaRepresentanteResponseSchema)
+def registrar_liberacao_comercial(
+    session_id: str, body: LiberacaoComercialBodySchema
+) -> ConsultaRepresentanteResponseSchema:
+    """
+    Pagamento antecipado: a linha fica parada no representante até o comercial
+    liberar por e-mail. LIBERADO registra quem liberou; AGUARDANDO desfaz.
+    """
+    try:
+        store.session_path(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada.")
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    agora = datetime.now(timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
+    quem, obs = body.liberado_por.strip(), body.obs.strip()
+    atualizados, liberados = 0, []
+    for id_linha in body.ids:
+        ref = next((c for c in consolidados if mesma_linha(c, id_linha)), None)
+        if not ref:
+            continue
+        if body.resultado == "LIBERADO":
+            linha = f"COMERCIAL LIBEROU {agora}" + (f" por {quem}" if quem else "") + (f" — {obs}" if obs else "")
+            patch = {
+                "liberacao_comercial": "LIBERADO",
+                "liberacao_comercial_por": quem,
+                "liberacao_comercial_em": agora,
+                "liberacao_comercial_obs": obs,
+            }
+            liberados.append(ref.id_item or id_linha)
+        else:
+            linha = f"LIBERAÇÃO COMERCIAL DESFEITA {agora}"
+            patch = {
+                "liberacao_comercial": "AGUARDANDO",
+                "liberacao_comercial_por": "",
+                "liberacao_comercial_em": "",
+                "liberacao_comercial_obs": "",
+            }
+        patch["auditoria"] = (ref.auditoria + " | " + linha).strip(" |")
+        if _patch_consolidado_session(session_id, ref.id_item or id_linha, patch):
+            atualizados += 1
+    alocados = _alocar_resolvidos(session_id, liberados)
+    rotulo = "liberada(s) pelo comercial" if body.resultado == "LIBERADO" else "voltou(aram) a aguardar o comercial"
+    msg = f"{atualizados} linha(s) {rotulo}."
+    if alocados:
+        msg += " Entraram na rota: " + ", ".join(sorted(set(alocados.values()))) + "."
+    return ConsultaRepresentanteResponseSchema(ok=atualizados > 0, atualizados=atualizados, message=msg, alocados=alocados)
+
+
+@router.post("/{session_id}/informar-peso", response_model=ConsultaRepresentanteResponseSchema)
+def informar_peso(session_id: str, body: InformarPesoBodySchema) -> ConsultaRepresentanteResponseSchema:
+    """Item que veio com peso zerado: a logística informa o peso real."""
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    ref = next((c for c in consolidados if mesma_linha(c, body.id)), None)
+    if not ref:
+        raise HTTPException(status_code=404, detail=f"Linha {body.id} não encontrada.")
+    agora = datetime.now(timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
+    peso = round(body.peso_kg, 1)
+    patch = {
+        "peso_kg": peso,
+        "auditoria": (ref.auditoria + f" | PESO INFORMADO {agora}: {formatar_kg(peso)} kg (veio zerado no PDF)").strip(" |"),
+    }
+    if not _patch_consolidado_session(session_id, ref.id_item or body.id, patch):
+        raise HTTPException(status_code=404, detail="Não foi possível atualizar a linha.")
+    alocados = _alocar_resolvidos(session_id, [ref.id_item or body.id])
+    msg = f"Peso de {ref.cliente} atualizado para {formatar_kg(peso)} kg."
+    if alocados:
+        msg += " Entrou na rota: " + ", ".join(sorted(set(alocados.values()))) + "."
+    return ConsultaRepresentanteResponseSchema(ok=True, atualizados=1, message=msg, alocados=alocados)
 
 
 def _operar_divisao(session_id: str, operacao) -> MoverPedidoResponseSchema:

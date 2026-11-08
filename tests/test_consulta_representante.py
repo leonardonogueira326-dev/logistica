@@ -57,57 +57,61 @@ def _motor_ingestao_minimo() -> MotorIngestao:
     return m
 
 
-@pytest.mark.parametrize(
-    "dt_producao, consulta",
-    [("02/07/26", "PENDENTE"), ("24/06/26", "PENDENTE"), ("23/06/26", ""), ("22/06/26", ""), ("10/06/26", "")],
-)
-def test_regra_tres_dias_uteis(dt_producao, consulta):
+@pytest.mark.parametrize("dt_producao, dias", [("02/07/26", 9), ("24/06/26", 3), ("23/06/26", 2), ("10/06/26", -7)])
+def test_ingestao_guarda_antecedencia_em_dias_uteis(dt_producao, dias):
     item = PedidoConsolidado(status="LIBERADO")
     pedido = PedidoFaturamento(data_faturamento="19/06/26", data_producao=dt_producao)
     _motor_ingestao_minimo()._aplicar_regra_consulta(item, pedido)
-    assert item.consulta_representante == consulta
     assert item.data_referencia == "2026-06-19"
-    if consulta:
-        assert item.data_prevista_recebimento == parse_data_br(dt_producao).isoformat()
-        assert "Consultar representante" in item.motivo_atraso
+    assert item.dias_uteis_antecedencia == dias
 
 
-def test_bloqueio_fiscal_nao_vai_para_consulta():
-    item = PedidoConsolidado(status="BLOQUEIO FISCAL")
-    pedido = PedidoFaturamento(data_faturamento="19/06/26", data_producao="02/07/26")
+def test_ingestao_marca_pagamento_antecipado_para_o_comercial():
+    item = PedidoConsolidado(status="RETIRA FOB")
+    pedido = PedidoFaturamento(
+        data_faturamento="19/06/26", data_producao="19/06/26",
+        observacao_comercial="Redução do DECRETO - PAGTO. ANTECIPADO DEPOSITO QUANDO MATERIAL ESTIVER PRONTO",
+    )
     _motor_ingestao_minimo()._aplicar_regra_consulta(item, pedido)
-    assert item.consulta_representante == ""
+    assert item.liberacao_comercial == "AGUARDANDO"
 
 
-def test_motor_usa_data_do_pdf_e_nao_o_relogio():
-    # Mesmo reprocessando o PDF de junho em novembro, a linha de 02/07 fica parada.
-    c = PedidoConsolidado(
+def _parado(**campos) -> PedidoConsolidado:
+    base = dict(
         numero_pedido="003060/26/001", id_item="003060/26/001#005037/26", cliente="MOLTEC",
         cliente_codigo="02305", peso_kg=150, cidade_destino="SAO PAULO", status="LIBERADO",
-        representante="ELAINE ZANETTI", data_referencia="2026-06-19",
-        data_prevista_recebimento="2026-07-02", consulta_representante="PENDENTE",
-        motivo_atraso="Consultar representante: Dt. Produção 02/07/2026 (9 dias úteis)",
+        representante="ELAINE ZANETTI", data_referencia="2026-06-19", data_producao="02/07/26",
+        dias_uteis_antecedencia=9,
     )
+    base.update(campos)
+    return PedidoConsolidado(**base)
+
+
+def test_motor_segura_linha_com_pendencia_mesmo_reprocessando_depois():
     motor = MotorLogistica()
-    motor.alocar_frota([c])
+    motor.alocar_frota([_parado()])
     assert [b["id_item"] for b in motor.backlog_futuro] == ["003060/26/001#005037/26"]
     b = motor.backlog_futuro[0]
-    assert b["representante"] == "ELAINE ZANETTI" and b["consulta_representante"] == "PENDENTE"
+    assert b["representante"] == "ELAINE ZANETTI"
+    assert b["pendencias"] == "CONSULTA_REPRESENTANTE"
+    assert "Consultar representante" in b["motivo"]
     assert not any(motor.itens_por_veiculo.values())
 
 
 def test_liberado_pelo_representante_entra_na_rota():
-    c = PedidoConsolidado(
-        numero_pedido="003060/26/001", id_item="003060/26/001#005037/26", cliente="MOLTEC",
-        cliente_codigo="02305", peso_kg=150, cidade_destino="SAO PAULO", status="LIBERADO",
-        data_referencia="2026-06-19", data_prevista_recebimento="", consulta_representante="LIBERADO",
-    )
+    c = _parado(consulta_representante="LIBERADO")
     motor = MotorLogistica()
     motor.alocar_frota([c])
     assert not motor.backlog_futuro
     assert any(i.id_item == c.id_item for itens in motor.itens_por_veiculo.values() for i in itens) or any(
         b.get("id_item") == c.id_item for b in motor.backlog_local
     )
+
+
+def test_liberado_pelo_representante_mas_aguardando_comercial_continua_parado():
+    motor = MotorLogistica()
+    motor.alocar_frota([_parado(consulta_representante="LIBERADO", liberacao_comercial="AGUARDANDO")])
+    assert motor.backlog_futuro[0]["pendencias"] == "PAGAMENTO_ANTECIPADO"
 
 
 @pytest.mark.parametrize(
@@ -120,3 +124,13 @@ def test_liberado_pelo_representante_entra_na_rota():
 )
 def test_limpar_representante_do_pdf(bruto, limpo):
     assert limpar_representante_pdf(bruto) == limpo
+
+
+def test_representante_corrigido_pelo_operador_e_aprendido(tmp_path, monkeypatch):
+    import representantes as r
+
+    monkeypatch.setattr(r, "ARQUIVO_APRENDIDOS", tmp_path / "rep.json")
+    assert r.aprender_representante("02305", "Elaine Z.")
+    assert r.carregar_aprendidos() == {"2305": "ELAINE Z."}
+    assert not r.aprender_representante("02305", "ELAINE Z.")  # já sabia
+    assert not r.aprender_representante("02305", "NÃO IDENTIFICADO")

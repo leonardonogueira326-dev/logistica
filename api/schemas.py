@@ -22,6 +22,13 @@ class PedidoConsolidadoSchema(BaseModel):
     consulta_representante: str = ""
     consulta_obs: str = ""
     consulta_em: str = ""
+    liberacao_comercial: str = ""
+    liberacao_comercial_por: str = ""
+    liberacao_comercial_em: str = ""
+    liberacao_comercial_obs: str = ""
+    # Calculadas na leitura (pendencias.py): o que segura a linha fora da rota
+    pendencias: list[str] = Field(default_factory=list)
+    motivo_parado: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     peso_kg: float = 0.0
@@ -209,6 +216,18 @@ class AjustarDivisaoSchema(BaseModel):
 
 class CargaRefSchema(BaseModel):
     id_carga: str
+
+
+class LiberacaoComercialBodySchema(BaseModel):
+    ids: list[str] = Field(min_length=1)
+    resultado: str = Field(pattern="^(LIBERADO|AGUARDANDO)$")
+    liberado_por: str = ""
+    obs: str = Field("", description="Ex.: 'e-mail da Ana (comercial) 19/06 10:32'")
+
+
+class InformarPesoBodySchema(BaseModel):
+    id: str
+    peso_kg: float = Field(gt=0)
 
 
 class ConsultaRepresentanteBodySchema(BaseModel):

@@ -69,3 +69,6 @@ dados_teste/
 # Pacote de atualização entregue pelo Claude
 *.bundle
 _aplicar_melhorias.bat
+
+# Correções de representante feitas pelo operador (dados da empresa)
+data/representantes_aprendidos.json

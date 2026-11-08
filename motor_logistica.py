@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import config
+from pendencias import motivo_parado, pendencias
 from models import ItemRota, PedidoConsolidado, RotaVeiculo
 from normalizador import formatar_kg, normalizar_texto, resolver_rota_logistica
 from param_manager import carregar_parametros, rotulo_rota
@@ -209,7 +210,9 @@ class MotorLogistica:
             data_prev = (c.data_prevista_recebimento or "").strip()
             # "Hoje" = Data para Faturamento do PDF (reprocessar PDF antigo dá o mesmo resultado)
             referencia = (getattr(c, "data_referencia", "") or hoje).strip()
-            if data_prev and data_prev > referencia:
+            limite = int(self.params.get("antecedencia_consulta_dias_uteis", 3))
+            motivo_pendencia = motivo_parado(c, limite)
+            if motivo_pendencia or (data_prev and data_prev > referencia):
                 self.backlog_futuro.append(
                     {
                         "numero_pedido": c.numero_pedido,
@@ -223,7 +226,8 @@ class MotorLogistica:
                         "cidade_destino": c.cidade_destino or c.cidade,
                         "rota_logistica": c.rota_logistica,
                         "peso_kg": str(c.peso_kg),
-                        "motivo": c.motivo_atraso or "RECEBIMENTO POSTERGADO",
+                        "motivo": motivo_pendencia or c.motivo_atraso or "RECEBIMENTO POSTERGADO",
+                        "pendencias": ",".join(pendencias(c, limite)),
                         "consulta_representante": getattr(c, "consulta_representante", ""),
                         "dias_uteis_antecedencia": str(getattr(c, "dias_uteis_antecedencia", "") or ""),
                         "data_prevista_recebimento": data_prev,
