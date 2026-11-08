@@ -21,6 +21,7 @@ export interface PedidoConsolidado {
   liberacao_comercial_por?: string;
   liberacao_comercial_em?: string;
   liberacao_comercial_obs?: string;
+  obs_recebimento?: string;
   /** Calculado pela API: CONSULTA_REPRESENTANTE, PAGAMENTO_ANTECIPADO, PESO_ZERADO */
   pendencias?: Pendencia[];
   motivo_parado?: string;
@@ -173,6 +174,9 @@ export interface ItemRota {
   id_carga?: string;
   id_item?: string;
   of_ano?: string;
+  /** Horário/dia de recebimento do cliente ("SÓ ABRE AS 8:00") */
+  obs_recebimento?: string;
+  data_producao?: string;
   /** "1/2", "2/2"... quando a linha foi dividida entre caminhões */
   parte?: string;
   peso_total_linha?: number;
@@ -214,6 +218,8 @@ export interface RotaVeiculo {
 export interface Roteirizacao {
   /** Caminhões fechados pelo operador (a sugestão não mexe) */
   veiculos_fechados?: string[];
+  /** Motorista/ajudante/placa por caminhão no dia (vai para o romaneio) */
+  equipe_por_veiculo?: Record<string, EquipeVeiculo>;
   /** Resultado da última sugestão/montagem */
   mensagem?: string;
   session_id: string;
@@ -245,6 +251,12 @@ export interface DividirCargaRequest {
 }
 
 export type Pendencia = "CONSULTA_REPRESENTANTE" | "PAGAMENTO_ANTECIPADO" | "PESO_ZERADO";
+
+export interface EquipeVeiculo {
+  motorista: string;
+  ajudante: string;
+  placa: string;
+}
 
 export type ResultadoConsulta = "LIBERADO" | "NAO_LIBERADO" | "PENDENTE";
 

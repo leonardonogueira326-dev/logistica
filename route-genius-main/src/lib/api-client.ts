@@ -4,6 +4,7 @@ import type {
   OperacaoDivisao,
   ConsultaRepresentanteRequest,
   LiberacaoComercialRequest,
+  EquipeVeiculo,
   ConsultaRepresentanteResponse,
   AnteciparPedidoResponse,
   ConfigResponse,
@@ -55,6 +56,18 @@ export async function uploadSession(files: {
     method: "POST",
     body: form,
   });
+}
+
+/** Motorista, ajudante e placa do caminhão no dia. */
+export async function definirEquipe(
+  sessionId: string,
+  veiculoId: string,
+  equipe: EquipeVeiculo,
+): Promise<MoverPedidoResponse> {
+  return request<MoverPedidoResponse>(
+    `/sessions/${sessionId}/veiculos/${encodeURIComponent(veiculoId)}/equipe`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(equipe) },
+  );
 }
 
 /** Fecha/reabre um caminhão: a sugestão automática não mexe em caminhão fechado. */

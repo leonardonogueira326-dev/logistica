@@ -17,9 +17,10 @@ import {
   roteirizar,
   roteirizarQuadro,
   fecharVeiculo,
+  definirEquipe,
   uploadSession,
 } from "@/lib/api-client";
-import type { AnteciparPedidoBody, ConsolidadoPatch, ConsultaRepresentanteRequest, LiberacaoComercialRequest, OperacaoDivisao, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
+import type { EquipeVeiculo, AnteciparPedidoBody, ConsolidadoPatch, ConsultaRepresentanteRequest, LiberacaoComercialRequest, OperacaoDivisao, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
 import { COLUMN_BACKLOG } from "@/lib/logistica-types";
 import { optimisticMoveRoteirizacao } from "@/lib/optimistic-move";
 import { SESSION_KEY } from "@/lib/logistica-types";
@@ -100,6 +101,14 @@ export function useLogisticaSession(sessionId: string | null) {
   const fecharMutation = useMutation({
     mutationFn: ({ sid, veiculoId, fechado }: { sid: string; veiculoId: string; fechado: boolean }) =>
       fecharVeiculo(sid, veiculoId, fechado),
+    onSuccess: (data, { sid }) => {
+      queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
+    },
+  });
+
+  const equipeMutation = useMutation({
+    mutationFn: ({ sid, veiculoId, equipe }: { sid: string; veiculoId: string; equipe: EquipeVeiculo }) =>
+      definirEquipe(sid, veiculoId, equipe),
     onSuccess: (data, { sid }) => {
       queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
     },
@@ -213,6 +222,7 @@ export function useLogisticaSession(sessionId: string | null) {
     roteirizarMutation,
     recomecarMutation,
     fecharMutation,
+    equipeMutation,
     moverMutation,
     anteciparMutation,
     dividirMutation,

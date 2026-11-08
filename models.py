@@ -115,6 +115,8 @@ class PedidoConsolidado:
     liberacao_comercial_por: str = ""
     liberacao_comercial_em: str = ""
     liberacao_comercial_obs: str = ""
+    # Horário/dia de recebimento do cliente tirado da observação ("SÓ ABRE AS 8:00")
+    obs_recebimento: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     peso_kg: float = 0.0
@@ -172,6 +174,8 @@ class ItemRota:
     peso_total_linha: float = 0.0
     # "SIM" enquanto a divisão feita pelo motor não foi conferida pelo operador
     divisao_automatica: str = ""
+    obs_recebimento: str = ""
+    data_producao: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     representante: str = ""
