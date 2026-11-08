@@ -39,7 +39,7 @@ from models import PedidoConsolidado  # noqa: E402
 from motor_ingestao import MotorIngestao  # noqa: E402
 from motor_logistica import MotorLogistica  # noqa: E402
 import config  # noqa: E402
-from normalizador import normalizar_texto, resolver_rota_logistica  # noqa: E402
+from normalizador import mesma_linha, normalizar_texto, resolver_rota_logistica  # noqa: E402
 from param_manager import carregar_parametros  # noqa: E402
 from gerador_romaneio import (  # noqa: E402
     gerar_romaneio_caminhao_xlsx,
@@ -134,7 +134,7 @@ def _patch_consolidado_session(session_id: str, numero_pedido: str, patch: dict[
 
     found = False
     for item in data.get("consolidados", []):
-        if item.get("numero_pedido") == numero_pedido or item.get("numero_pedido_norm") == numero_pedido:
+        if mesma_linha(item, numero_pedido):
             item.update(patch)
             found = True
             break
@@ -252,7 +252,7 @@ def patch_consolidado(
     params = carregar_parametros()
     found_idx = -1
     for i, raw in enumerate(ingest.get("consolidados", [])):
-        if raw.get("numero_pedido_norm") == pedido_norm or raw.get("numero_pedido") == pedido_norm:
+        if mesma_linha(raw, pedido_norm):
             found_idx = i
             break
 
@@ -446,9 +446,11 @@ def exportar_romaneio_caminhao(session_id: str, caminhao_id: str) -> StreamingRe
     consolidados_map: dict[str, dict[str, Any]] = {}
     for c in consolidados:
         row = asdict(c)
-        consolidados_map[c.numero_pedido] = row
+        consolidados_map.setdefault(c.numero_pedido, row)
         if c.numero_pedido_norm:
-            consolidados_map[c.numero_pedido_norm] = row
+            consolidados_map.setdefault(c.numero_pedido_norm, row)
+        if c.id_item:
+            consolidados_map[c.id_item] = row
 
     try:
         conteudo = gerar_romaneio_caminhao_xlsx(data, caminhao_id, consolidados_map)
@@ -539,7 +541,7 @@ def antecipar_pedido(
 
     _, consolidados, _ = _get_active_consolidados(session_id)
     pedido_ref = next(
-        (c for c in consolidados if c.numero_pedido == body.numero_pedido),
+        (c for c in consolidados if mesma_linha(c, body.numero_pedido)),
         None,
     )
     if not pedido_ref:

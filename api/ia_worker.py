@@ -19,16 +19,17 @@ from extrator_pdf import observacao_apenas_administrativa, tipo_frete_padrao_sup
 from models import EventoEmail, PedidoFaturamento, RetencaoFiscal  # noqa: E402
 from motor_ingestao import MotorIngestao, calcular_acondicionamento_e_restricoes  # noqa: E402
 from quarentena import avaliar_quarentena  # noqa: E402
+from normalizador import mesma_linha  # noqa: E402
 
 
 def _pedido_key(item: dict[str, Any]) -> str:
-    return item.get("numero_pedido_norm") or item.get("numero_pedido") or ""
+    return item.get("id_item") or item.get("numero_pedido_norm") or item.get("numero_pedido") or ""
 
 
 def _indexar_pedidos_pdf(pedidos: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     mapa: dict[str, dict[str, Any]] = {}
     for p in pedidos:
-        for chave in (p.get("numero_pedido_norm"), p.get("numero_pedido")):
+        for chave in (p.get("id_item"), p.get("numero_pedido_norm"), p.get("numero_pedido")):
             if chave:
                 mapa[str(chave)] = p
     return mapa
@@ -200,7 +201,7 @@ def processar_fila_llm_inline(motor: MotorIngestao) -> int:
             # Sincroniza pedido PDF se tipo_frete mudou
             if "tipo_frete" in patch:
                 for p in motor.pedidos_pdf:
-                    if p.numero_pedido_norm == chave or p.numero_pedido == chave:
+                    if mesma_linha(p, chave):
                         p.tipo_frete = patch["tipo_frete"]
                         p.flag_revisao_llm = patch.get("flag_revisao_llm", "NAO")
                         p.sugestao_llm_status = patch.get("sugestao_llm_status", "")

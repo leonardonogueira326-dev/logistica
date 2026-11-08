@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import config
+from normalizador import mesma_linha
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_ROOT = PROJECT_ROOT / "data" / "sessions"
@@ -116,10 +117,7 @@ class SessionStore:
 
             found = False
             for item in ingest.get("consolidados", []):
-                if (
-                    item.get("numero_pedido_norm") == pedido_norm
-                    or item.get("numero_pedido") == pedido_norm
-                ):
+                if mesma_linha(item, pedido_norm):
                     item.update(patch)
                     found = True
                     break

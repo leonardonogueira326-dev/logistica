@@ -17,6 +17,7 @@ import pdfplumber
 import config
 from models import PedidoFaturamento
 from normalizador import (
+    montar_id_item,
     normalizar_codigo_cliente,
     normalizar_pedido,
     normalizar_texto,
@@ -26,6 +27,8 @@ from normalizador import (
 
 MARCADOR_OBS = "\u00a7OBS\u00a7 "
 MARCADOR_OF = "\u00a7OF\u00a7 "
+REGEX_SOLICITACAO = re.compile(r"Solicita[cç][aã]o de Faturamento\s*N[°ºo]?\s*(\d+)", re.IGNORECASE)
+REGEX_DATA_FATURAMENTO = re.compile(r"Data para Faturamento:\s*(\d{2}/\d{2}/\d{2,4})", re.IGNORECASE)
 REGEX_INICIO_ITEM = re.compile(r"^(\d{3})\s+(\d{6}/\d{2}/\d{3})\s+(.+)$")
 REGEX_PESO = re.compile(r"([\d.]+,\d{2})\s*(?:KG|ROLO)\b", re.IGNORECASE)
 REGEX_DATA_PRODUCAO = re.compile(r"\b(\d{2}/\d{2}/\d{2})\b")
@@ -246,10 +249,16 @@ class ExtratorPDF:
 
             linhas = self._extrair_linhas_pdf()
             blocos = self._segmentar_blocos(linhas)
+            solicitacao, data_fat = self._ler_cabecalho()
 
             for indice, bloco in enumerate(blocos, start=1):
                 try:
                     pedido = self._parsear_bloco(bloco)
+                    pedido.numero_solicitacao = solicitacao
+                    pedido.data_faturamento = data_fat
+                    pedido.id_item = montar_id_item(
+                        pedido.numero_pedido, pedido.of_ano, pedido.sequencia
+                    )
                     if pedido.numero_pedido:
                         pedidos.append(pedido)
                 except Exception as exc:
@@ -339,6 +348,17 @@ class ExtratorPDF:
                     else:
                         saida.append(f"{MARCADOR_OBS}{dir_}")
         return saida
+
+    def _ler_cabecalho(self) -> tuple[str, str]:
+        """Nº da solicitação e data para faturamento (cabeçalho da 1ª página)."""
+        try:
+            with pdfplumber.open(self.caminho_pdf) as pdf:
+                texto = pdf.pages[0].extract_text() or ""
+        except Exception:  # noqa: BLE001
+            return "", ""
+        m_sol = REGEX_SOLICITACAO.search(texto)
+        m_data = REGEX_DATA_FATURAMENTO.search(texto)
+        return (m_sol.group(1) if m_sol else "", m_data.group(1) if m_data else "")
 
     @staticmethod
     def _ler_of_por_caracteres(pagina, topo_linha: float, x_of: float) -> str:

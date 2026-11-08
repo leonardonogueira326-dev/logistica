@@ -24,6 +24,15 @@ def hash_pedido(numero_pedido: str, cliente_codigo: str = "") -> str:
     return hashlib.sha256(chave.encode("utf-8")).hexdigest()[:16]
 
 
+def chave_linha_solicitacao(numero_solicitacao: str, seq_solicitacao: str, id_item: str) -> str:
+    """Uma linha de um PDF específico. Repetida só se o MESMO PDF for carregado de novo."""
+    sol = (numero_solicitacao or "").strip()
+    seq = (seq_solicitacao or "").strip()
+    if not sol or not seq:
+        return ""
+    return f"SOL{sol}|{seq}|{(id_item or '').strip()}".upper()
+
+
 def _arquivo_historico(data_ref: date | None = None) -> Path:
     data_ref = data_ref or date.today()
     return HISTORICO_DIR / f"ingestao_{data_ref.isoformat()}.json"
@@ -59,6 +68,43 @@ def _rebuild_cache_hashes() -> set[str]:
     return hashes
 
 
+_cache_linhas: set[str] | None = None
+_cache_por_item: dict[str, list[dict[str, Any]]] | None = None
+
+
+def _rebuild_indices_item() -> tuple[set[str], dict[str, list[dict[str, Any]]]]:
+    linhas: set[str] = set()
+    por_item: dict[str, list[dict[str, Any]]] = {}
+    if not HISTORICO_DIR.exists():
+        return linhas, por_item
+    for arquivo in sorted(HISTORICO_DIR.glob("ingestao_*.json")):
+        data = _carregar_arquivo(arquivo)
+        for reg in data.get("pedidos", {}).values():
+            if reg.get("chave_linha"):
+                linhas.add(reg["chave_linha"])
+            if reg.get("id_item"):
+                por_item.setdefault(reg["id_item"], []).append(reg)
+    return linhas, por_item
+
+
+def _indices_item(recarregar: bool = False) -> tuple[set[str], dict[str, list[dict[str, Any]]]]:
+    global _cache_linhas, _cache_por_item
+    if _cache_linhas is None or _cache_por_item is None or recarregar:
+        _cache_linhas, _cache_por_item = _rebuild_indices_item()
+    return _cache_linhas, _cache_por_item
+
+
+def linha_ja_arquivada(numero_solicitacao: str, seq_solicitacao: str, id_item: str) -> bool:
+    """True quando esta mesma linha deste mesmo PDF já foi conferida (PDF repetido)."""
+    chave = chave_linha_solicitacao(numero_solicitacao, seq_solicitacao, id_item)
+    return bool(chave) and chave in _indices_item()[0]
+
+
+def programado_anteriormente(id_item: str) -> list[dict[str, Any]]:
+    """Registros anteriores do mesmo item+OF (ex.: 300 kg ontem, saldo de 700 kg hoje)."""
+    return list(_indices_item()[1].get((id_item or "").strip(), []))
+
+
 def carregar_hashes_historico(recarregar: bool = False) -> set[str]:
     global _cache_hashes
     if _cache_hashes is None or recarregar:
@@ -88,12 +134,25 @@ def arquivar_sessao(
 
     data_entrega = data_entrega or data_ref.isoformat()
     for item in consolidados:
-        h = hash_pedido(
-            item.get("numero_pedido_norm") or item.get("numero_pedido", ""),
-            item.get("cliente_codigo", ""),
+        id_item = item.get("id_item", "")
+        chave_linha = chave_linha_solicitacao(
+            item.get("numero_solicitacao", ""), item.get("seq_solicitacao", ""), id_item
         )
+        if chave_linha:
+            # Uma entrada por linha de solicitação: o mesmo item+OF pode voltar
+            # em outros dias (saldo) sem sobrescrever o registro anterior.
+            h = hashlib.sha256(chave_linha.encode("utf-8")).hexdigest()[:16]
+        else:
+            h = hash_pedido(
+                item.get("numero_pedido_norm") or item.get("numero_pedido", ""),
+                item.get("cliente_codigo", ""),
+            )
         registro = {
             "hash_id": h,
+            "id_item": id_item,
+            "chave_linha": chave_linha,
+            "numero_solicitacao": item.get("numero_solicitacao", ""),
+            "peso_kg": item.get("peso_kg", 0),
             "numero_pedido": item.get("numero_pedido", ""),
             "numero_pedido_norm": item.get("numero_pedido_norm", ""),
             "cliente": item.get("cliente", ""),
@@ -116,6 +175,7 @@ def arquivar_sessao(
 
     _salvar_arquivo(path, payload)
     carregar_hashes_historico(recarregar=True)
+    _indices_item(recarregar=True)
     return str(path)
 
 
