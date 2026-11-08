@@ -196,6 +196,11 @@ def classificar_frete_com_confianca(
         if REGEX_RETIRA_FOB.search(texto_intencao):
             return "RETIRA_FOB", True
 
+        # A "transportadora" do PDF pode ser o próprio cliente buscando:
+        # "Transp: 00347 - RETIRA NA FABRICA"
+        if re.search(r"\bRETIRA\b|CLIENTE\s+BUSCA", normalizar_texto(texto_transp)):
+            return "RETIRA_FOB", True
+
         if REGEX_HUB_REDESPACHO.search(texto_intencao):
             if not _transportadora_superfine(texto_transp, codigo_transp):
                 return "ENTREGA_TERCEIRO_HUB", True
