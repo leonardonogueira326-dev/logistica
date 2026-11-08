@@ -26,6 +26,7 @@ class PedidoConsolidadoSchema(BaseModel):
     liberacao_comercial_por: str = ""
     liberacao_comercial_em: str = ""
     liberacao_comercial_obs: str = ""
+    obs_recebimento: str = ""
     # Calculadas na leitura (pendencias.py): o que segura a linha fora da rota
     pendencias: list[str] = Field(default_factory=list)
     motivo_parado: str = ""
@@ -110,6 +111,12 @@ class IngestaoResponseSchema(BaseModel):
     erros: list[str] = Field(default_factory=list)
 
 
+class EquipeVeiculoSchema(BaseModel):
+    motorista: str = ""
+    ajudante: str = ""
+    placa: str = ""
+
+
 class FecharVeiculoSchema(BaseModel):
     fechado: bool = True
 
@@ -151,6 +158,8 @@ class ItemRotaSchema(BaseModel):
     parte: str = ""
     peso_total_linha: float = 0.0
     divisao_automatica: str = ""
+    obs_recebimento: str = ""
+    data_producao: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     representante: str = ""
@@ -195,6 +204,8 @@ class RoteirizacaoSchema(BaseModel):
     itens_retorno_por_veiculo: dict[str, list[ItemRotaSchema]] = Field(default_factory=dict)
     viagens_retorno_habilitadas: list[str] = Field(default_factory=list)
     veiculos_fechados: list[str] = Field(default_factory=list)
+    # vid -> {motorista, ajudante, placa}
+    equipe_por_veiculo: dict[str, dict[str, str]] = Field(default_factory=dict)
     mensagem: str = ""
     metricas_retorno: dict[str, dict[str, str | float]] = Field(default_factory=dict)
     jornada_maxima_minutos: int = 600

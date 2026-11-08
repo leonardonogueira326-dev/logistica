@@ -72,3 +72,6 @@ _aplicar_melhorias.bat
 
 # Correções de representante feitas pelo operador (dados da empresa)
 data/representantes_aprendidos.json
+
+# Nomes de motoristas/ajudantes por caminhão (dados da empresa)
+data/equipe_padrao.json

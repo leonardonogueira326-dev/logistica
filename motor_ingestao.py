@@ -45,6 +45,7 @@ from normalizador import (
 )
 from param_manager import carregar_parametros
 from dias_uteis import dias_uteis_ate, parse_data_br
+from recebimento import extrair_restricao_recebimento
 from representantes import carregar_aprendidos, carregar_representantes, limpar_representante_pdf, localizar_base
 from quarentena import avaliar_quarentena, detectar_alertas_comerciais
 from historico_manager import hash_pedido, linha_ja_arquivada, programado_anteriormente
@@ -462,6 +463,7 @@ class MotorIngestao:
                     ).strip(" |")
 
                 self._aplicar_representante(item, pedido)
+                item.obs_recebimento = extrair_restricao_recebimento(item.observacao_comercial)
                 self._aplicar_regra_consulta(item, pedido)
                 consolidados.append(item)
             except Exception as exc:

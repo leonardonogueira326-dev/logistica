@@ -29,6 +29,7 @@ from api.schemas import (  # noqa: E402
     LiberacaoComercialBodySchema,
     ConsultaRepresentanteResponseSchema,
     DividirCargaSchema,
+    EquipeVeiculoSchema,
     FecharVeiculoSchema,
     MoverPedidoSchema,
     MoverPedidoResponseSchema,
@@ -50,6 +51,8 @@ import config  # noqa: E402
 from normalizador import formatar_kg, mesma_linha, normalizar_texto, resolver_rota_logistica  # noqa: E402
 from pendencias import motivo_parado, pendencias as calc_pendencias  # noqa: E402
 from representantes import aprender_representante  # noqa: E402
+from equipe import equipe_inicial, frota_cadastrada, lembrar  # noqa: E402
+from romaneio_planilha import gerar_romaneio_planilha  # noqa: E402
 from param_manager import carregar_parametros  # noqa: E402
 from gerador_romaneio import (  # noqa: E402
     gerar_romaneio_caminhao_xlsx,
@@ -193,6 +196,7 @@ def _motor_from_roteirizacao(data: dict[str, Any]) -> MotorLogistica:
     }
     motor.viagens_retorno_habilitadas = list(data.get("viagens_retorno_habilitadas", []))
     motor.veiculos_fechados = list(data.get("veiculos_fechados", []))
+    motor.equipe_por_veiculo = dict(data.get("equipe_por_veiculo", {}))
     return motor
 
 
@@ -580,9 +584,24 @@ def roteirizar(session_id: str, recomecar: bool = False) -> RoteirizacaoSchema:
     else:
         motor = MotorLogistica()
         motor.alocar_frota(consolidados)
+        # Equipe: mantém a do dia ao recomeçar; num quadro novo, sugere a última usada.
+        motor.equipe_por_veiculo = (existente or {}).get("equipe_por_veiculo") or equipe_inicial()
         mensagem = "Quadro do dia montado." if not existente else "Quadro refeito do zero."
     store.save_roteirizacao(session_id, motor.para_dict())
     return _roteirizacao_from_motor(motor, session_id, mensagem)
+
+
+@router.post("/{session_id}/veiculos/{veiculo_id}/equipe", response_model=MoverPedidoResponseSchema)
+def definir_equipe(session_id: str, veiculo_id: str, body: EquipeVeiculoSchema) -> MoverPedidoResponseSchema:
+    """Motorista, ajudante e placa do caminhão no dia (vai para o romaneio)."""
+
+    def aplicar(m: MotorLogistica) -> tuple[bool, str]:
+        dados = {k: getattr(body, k).strip().upper() for k in ("motorista", "ajudante", "placa")}
+        m.equipe_por_veiculo[veiculo_id] = dados
+        lembrar(veiculo_id, dados)
+        return True, "Equipe salva."
+
+    return _operar_divisao(session_id, aplicar)
 
 
 @router.post("/{session_id}/veiculos/{veiculo_id}/fechar", response_model=MoverPedidoResponseSchema)
@@ -613,6 +632,18 @@ def get_roteirizacao(session_id: str) -> RoteirizacaoSchema:
     return _roteirizacao_from_motor(motor, session_id)
 
 
+def _romaneio_planilha(session_id: str, rote: dict[str, Any], somente_veiculo: str = ""):
+    """Romaneio no formato da planilha ROTA DIARIA (templates/romaneio_modelo.xlsx)."""
+    from dias_uteis import parse_data_br
+
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    linhas = [_consolidado_com_pendencias(c).model_dump() for c in consolidados]
+    referencia = next((c.data_referencia for c in consolidados if c.data_referencia), "")
+    dia = parse_data_br(referencia)
+    conteudo = gerar_romaneio_planilha(rote, linhas, frota_cadastrada(), dia, somente_veiculo=somente_veiculo)
+    return conteudo, dia
+
+
 @router.get("/{session_id}/exportar-romaneio")
 def exportar_romaneio(session_id: str) -> StreamingResponse:
     try:
@@ -625,11 +656,11 @@ def exportar_romaneio(session_id: str) -> StreamingResponse:
         raise HTTPException(status_code=404, detail="Roteirização não executada.")
 
     try:
-        conteudo = gerar_romaneio_xlsx(data)
+        conteudo, dia = _romaneio_planilha(session_id, data)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Falha ao gerar romaneio: {exc}") from exc
 
-    filename = nome_arquivo_romaneio(session_id)
+    filename = f"ROTA DIARIA {dia.strftime('%d_%m_%Y')}.xlsx" if dia else nome_arquivo_romaneio(session_id)
     return StreamingResponse(
         BytesIO(conteudo),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -648,20 +679,8 @@ def exportar_romaneio_caminhao(session_id: str, caminhao_id: str) -> StreamingRe
     if not data:
         raise HTTPException(status_code=404, detail="Roteirização não executada.")
 
-    _, consolidados, _ = _get_active_consolidados(session_id)
-    consolidados_map: dict[str, dict[str, Any]] = {}
-    for c in consolidados:
-        row = asdict(c)
-        consolidados_map.setdefault(c.numero_pedido, row)
-        if c.numero_pedido_norm:
-            consolidados_map.setdefault(c.numero_pedido_norm, row)
-        if c.id_item:
-            consolidados_map[c.id_item] = row
-
     try:
-        conteudo = gerar_romaneio_caminhao_xlsx(data, caminhao_id, consolidados_map)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        conteudo, dia = _romaneio_planilha(session_id, data, somente_veiculo=caminhao_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Falha ao gerar romaneio: {exc}") from exc
 
