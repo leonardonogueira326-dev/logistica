@@ -41,6 +41,7 @@ L.Icon.Default.mergeOptions({
 
 type PontoMapa = {
   key: string;
+  idItem: string;
   lat: number;
   lng: number;
   numeroPedido: string;
@@ -98,6 +99,7 @@ function itemParaPonto(
   if (!coords) return null;
   return {
     key: `${caminhao ?? "pool"}-${item.id_carga || item.numero_pedido}`,
+    idItem: item.id_item || item.numero_pedido,
     lat: coords.lat,
     lng: coords.lng,
     numeroPedido: item.numero_pedido,
@@ -123,6 +125,7 @@ function backlogParaPonto(
   );
   if (!coords) return null;
   return {
+    idItem: entry.id_item || entry.numero_pedido || "",
     key: `${poolKey}-${numeroPedido}`,
     lat: coords.lat,
     lng: coords.lng,
@@ -146,9 +149,11 @@ function FitBoundsOnMarkers({ bounds }: { bounds: L.LatLngBounds | null }) {
 function MapaRoteirizacaoInner({
   data,
   consolidadosByPedido,
+  onCorrigir,
 }: {
   data: Roteirizacao;
   consolidadosByPedido: Record<string, PedidoConsolidado>;
+  onCorrigir?: (idItem: string, lat: number, lng: number) => void;
 }) {
   const { rotasCaminhao, pontosBacklog, bounds, semCoordenadas } = useMemo(() => {
     const rotas: RotaCaminhao[] = data.rotas.map((rota, idx) => {
@@ -252,6 +257,13 @@ function MapaRoteirizacaoInner({
                 key={p.key}
                 position={[p.lat, p.lng]}
                 icon={criarIconeCor(p.cor)}
+                draggable={!!onCorrigir}
+                eventHandlers={{
+                  dragend: (e) => {
+                    const ll = (e.target as L.Marker).getLatLng();
+                    onCorrigir?.(p.idItem, ll.lat, ll.lng);
+                  },
+                }}
               >
                 <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
                   Pedido: {p.numeroPedido} | Cliente: {p.cliente} | Peso:{" "}
@@ -262,7 +274,18 @@ function MapaRoteirizacaoInner({
           )}
 
           {pontosBacklog.map((p) => (
-            <Marker key={p.key} position={[p.lat, p.lng]} icon={criarIconeCor(p.cor)}>
+            <Marker
+              key={p.key}
+              position={[p.lat, p.lng]}
+              icon={criarIconeCor(p.cor)}
+              draggable={!!onCorrigir}
+              eventHandlers={{
+                dragend: (e) => {
+                  const ll = (e.target as L.Marker).getLatLng();
+                  onCorrigir?.(p.idItem, ll.lat, ll.lng);
+                },
+              }}
+            >
               <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
                 Pedido: {p.numeroPedido} | Cliente: {p.cliente} | Peso:{" "}
                 {p.peso.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg
@@ -291,7 +314,7 @@ function MapaRoteirizacaoInner({
         </span>
         {semCoordenadas > 0 && (
           <span className="text-amber-700 dark:text-amber-400">
-            {semCoordenadas} pedido(s) sem coordenada no cadastro — não exibidos no mapa.
+            {semCoordenadas} pedido(s) ainda sem localização — use “Localizar clientes”.
           </span>
         )}
       </div>
@@ -299,15 +322,98 @@ function MapaRoteirizacaoInner({
   );
 }
 
+type StatusGeo = {
+  rodando: boolean;
+  total?: number;
+  feitos?: number;
+  clientes?: number;
+  localizados?: number;
+  nao_achados?: string[];
+  erro?: string;
+  sem_endereco_na_base?: boolean;
+};
+
+/** Localizar clientes (geocodificação em segundo plano) com progresso. */
+function BarraLocalizacao({ sessionId, onAtualizar }: { sessionId: string; onAtualizar: () => void }) {
+  const [status, setStatus] = useState<StatusGeo | null>(null);
+  const consultar = async () => {
+    const r = await fetch(`/api/sessions/${sessionId}/geocodificar`);
+    if (r.ok) setStatus((await r.json()) as StatusGeo);
+  };
+  useEffect(() => {
+    void consultar();
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!status?.rodando) return;
+    const t = setInterval(async () => {
+      await consultar();
+      onAtualizar();
+    }, 3000);
+    return () => clearInterval(t);
+  }, [status?.rodando]); // eslint-disable-line react-hooks/exhaustive-deps
+  const iniciar = async () => {
+    const r = await fetch(`/api/sessions/${sessionId}/geocodificar`, { method: "POST" });
+    if (r.ok) setStatus({ ...(status ?? {}), ...((await r.json()) as StatusGeo) });
+    setTimeout(() => void consultar(), 1500);
+  };
+  const faltam = Math.max((status?.clientes ?? 0) - (status?.localizados ?? 0), 0);
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-4 py-2 text-sm">
+      <span>
+        <b>{status?.localizados ?? "…"}</b> de <b>{status?.clientes ?? "…"}</b> destinos localizados no mapa
+      </span>
+      {status?.rodando ? (
+        <span className="text-muted-foreground">
+          Localizando… {status.feitos ?? 0}/{status.total ?? 0} (cerca de 1,5 s por cliente, só na primeira vez)
+        </span>
+      ) : (
+        faltam > 0 && (
+          <button
+            type="button"
+            onClick={() => void iniciar()}
+            className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-accent-foreground"
+          >
+            Localizar {faltam} cliente(s)
+          </button>
+        )
+      )}
+      {status?.erro && <span className="text-destructive text-xs">{status.erro}</span>}
+      {status?.sem_endereco_na_base && (
+        <span className="text-amber-700 text-xs">Coloque a base-de-clientes1.xlsx (com endereço) na pasta do sistema.</span>
+      )}
+      {!!status?.nao_achados?.length && (
+        <span className="text-amber-700 text-xs" title={status.nao_achados.join(", ")}>
+          {status.nao_achados.length} não encontrado(s) — arraste o marcador para corrigir
+        </span>
+      )}
+      <span className="ml-auto text-xs text-muted-foreground">Posição errada? Arraste o marcador: o sistema guarda.</span>
+    </div>
+  );
+}
+
 export function MapaRoteirizacao({
   data,
   consolidadosByPedido,
+  sessionId,
+  onAtualizar,
 }: {
   data: Roteirizacao;
   consolidadosByPedido: Record<string, PedidoConsolidado>;
+  sessionId?: string;
+  onAtualizar?: () => void;
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  const corrigir = sessionId
+    ? async (idItem: string, lat: number, lon: number) => {
+        await fetch(`/api/sessions/${sessionId}/geo/corrigir`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id_item: idItem, lat, lon }),
+        });
+        onAtualizar?.();
+      }
+    : undefined;
 
   if (!mounted) {
     return (
@@ -317,5 +423,10 @@ export function MapaRoteirizacao({
     );
   }
 
-  return <MapaRoteirizacaoInner data={data} consolidadosByPedido={consolidadosByPedido} />;
+  return (
+    <div className="space-y-3">
+      {sessionId && <BarraLocalizacao sessionId={sessionId} onAtualizar={() => onAtualizar?.()} />}
+      <MapaRoteirizacaoInner data={data} consolidadosByPedido={consolidadosByPedido} onCorrigir={corrigir} />
+    </div>
+  );
 }

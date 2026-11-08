@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Download, Info, LayoutGrid, Loader2, Map, RotateCcw, Zap } from "lucide-react";
+import { Download, Info, LayoutGrid, Loader2, Map, RotateCcw, Route as IconeRota, Zap } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
 import { RouteKanbanBoard } from "@/components/logistica/RouteKanbanBoard";
@@ -9,7 +10,7 @@ import {
   getStoredSessionId,
   useLogisticaSession,
 } from "@/hooks/useLogisticaSession";
-import { exportarRomaneio, exportarRomaneioCaminhao } from "@/lib/api-client";
+import { exportarRomaneio, exportarRomaneioCaminhao, otimizarSequencia } from "@/lib/api-client";
 import type { OperacaoDivisao } from "@/lib/logistica-types";
 
 // Leaflet acessa `window` ao ser importado: o mapa só pode carregar no navegador.
@@ -28,8 +29,10 @@ function RoteirizarPage() {
   const sessionId = getStoredSessionId();
   const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, recomecarMutation, fecharMutation, equipeMutation, moverMutation, anteciparMutation, segundaViagemMutation, dividirMutation } =
     useLogisticaSession(sessionId);
+  const queryClient = useQueryClient();
   const [lastWarning, setLastWarning] = useState("");
   const [confirmarRecomeco, setConfirmarRecomeco] = useState(false);
+  const [otimizando, setOtimizando] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportingCaminhaoId, setExportingCaminhaoId] = useState<string | null>(null);
   const [habilitandoSegundaViagemId, setHabilitandoSegundaViagemId] = useState<string | null>(null);
@@ -77,6 +80,20 @@ function RoteirizarPage() {
   const handleEquipe = async (veiculoId: string, equipe: { motorista: string; ajudante: string; placa: string }) => {
     if (!sessionId) return;
     await equipeMutation.mutateAsync({ sid: sessionId, veiculoId, equipe });
+  };
+
+  const handleOtimizar = async () => {
+    if (!sessionId) return;
+    setOtimizando(true);
+    try {
+      const r = await otimizarSequencia(sessionId);
+      queryClient.setQueryData(["roteirizacao", sessionId], r.roteirizacao);
+      setLastWarning(r.warning ?? "");
+    } catch (e) {
+      setLastWarning(e instanceof Error ? e.message : "Não foi possível otimizar.");
+    } finally {
+      setOtimizando(false);
+    }
   };
 
   const handleFecharVeiculo = async (veiculoId: string, fechado: boolean) => {
@@ -182,6 +199,14 @@ function RoteirizarPage() {
             Sugerir alocação
           </button>
           <button
+            disabled={loading || !data || otimizando}
+            onClick={() => void handleOtimizar()}
+            title="Melhor ordem de entrega de cada caminhão aberto (distância e horário de recebimento). Precisa dos clientes localizados no mapa."
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm border border-accent/40 text-accent hover:bg-accent/10 disabled:opacity-50"
+          >
+            {otimizando ? <Loader2 className="w-4 h-4 animate-spin" /> : <IconeRota className="w-4 h-4" />} Otimizar sequência
+          </button>
+          <button
             disabled={loading || !data}
             onClick={() => setConfirmarRecomeco(true)}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm border border-destructive/40 text-destructive hover:bg-destructive/10 disabled:opacity-50"
@@ -267,7 +292,12 @@ function RoteirizarPage() {
           <TabsContent value="mapa" className="mt-4">
             {typeof window !== "undefined" && (
               <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Carregando mapa…</div>}>
-                <MapaRoteirizacao data={data} consolidadosByPedido={consolidadosByPedido} />
+                <MapaRoteirizacao
+                  data={data}
+                  consolidadosByPedido={consolidadosByPedido}
+                  sessionId={sessionId ?? undefined}
+                  onAtualizar={() => void consolidadosQuery.refetch()}
+                />
               </Suspense>
             )}
           </TabsContent>

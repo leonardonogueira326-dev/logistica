@@ -70,6 +70,15 @@ export async function definirEquipe(
   );
 }
 
+/** Melhor ordem de entrega (OR-Tools) de um caminhão ou de todos os abertos. */
+export async function otimizarSequencia(sessionId: string, veiculoId = ""): Promise<MoverPedidoResponse> {
+  return request<MoverPedidoResponse>(`/sessions/${sessionId}/otimizar-sequencia`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ veiculo_id: veiculoId }),
+  });
+}
+
 /** Fecha/reabre um caminhão: a sugestão automática não mexe em caminhão fechado. */
 export async function fecharVeiculo(
   sessionId: string,

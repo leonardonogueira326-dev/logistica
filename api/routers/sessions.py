@@ -53,6 +53,8 @@ from pendencias import motivo_parado, pendencias as calc_pendencias  # noqa: E40
 from representantes import aprender_representante  # noqa: E402
 from equipe import equipe_inicial, frota_cadastrada, lembrar  # noqa: E402
 from romaneio_planilha import gerar_romaneio_planilha  # noqa: E402
+import geocodificacao  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 from param_manager import carregar_parametros  # noqa: E402
 from gerador_romaneio import (  # noqa: E402
     gerar_romaneio_caminhao_xlsx,
@@ -86,11 +88,23 @@ def _limite_consulta() -> int:
     return int(carregar_parametros().get("antecedencia_consulta_dias_uteis", 3))
 
 
-def _consolidado_com_pendencias(c: PedidoConsolidado, limite: int | None = None) -> PedidoConsolidadoSchema:
+def _consolidado_com_pendencias(
+    c: PedidoConsolidado, limite: int | None = None, geo: tuple[dict, dict] | None = None
+) -> PedidoConsolidadoSchema:
     limite = _limite_consulta() if limite is None else limite
+    dados = asdict(c)
+    if geo is not None and (dados.get("latitude") is None or dados.get("longitude") is None):
+        ponto = geocodificacao.coordenada_da_linha(dados, *geo)
+        if ponto:
+            dados["latitude"], dados["longitude"] = ponto["lat"], ponto["lon"]
     return PedidoConsolidadoSchema(
-        **asdict(c), pendencias=calc_pendencias(c, limite), motivo_parado=motivo_parado(c, limite)
+        **dados, pendencias=calc_pendencias(c, limite), motivo_parado=motivo_parado(c, limite)
     )
+
+
+def _geo_contexto() -> tuple[dict, dict]:
+    """(cache de coordenadas, base de endereços) — carregados uma vez por chamada."""
+    return geocodificacao.carregar_cache(), geocodificacao.enderecos_base()
 
 
 def _nomes_veiculos(motor: MotorLogistica) -> dict[str, str]:
@@ -407,6 +421,7 @@ def list_consolidados(session_id: str) -> ConsolidadosListSchema:
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    geo = _geo_contexto()
     resumo = None
     if "resumo" in data:
         resumo = ResumoIngestaoSchema(**data["resumo"])
@@ -419,7 +434,7 @@ def list_consolidados(session_id: str) -> ConsolidadosListSchema:
         session_id=session_id,
         validated=validated,
         resumo=resumo,
-        consolidados=[_consolidado_com_pendencias(c) for c in consolidados],
+        consolidados=[_consolidado_com_pendencias(c, geo=geo) for c in consolidados],
         avisos=avisos if isinstance(avisos, list) else [],
     )
 
@@ -595,6 +610,123 @@ def roteirizar(session_id: str, recomecar: bool = False) -> RoteirizacaoSchema:
         mensagem = "Quadro do dia montado." if not existente else "Quadro refeito do zero."
     store.save_roteirizacao(session_id, motor.para_dict())
     return _roteirizacao_from_motor(motor, session_id, mensagem)
+
+
+# ------------------------------------------------------------- mapa e sequência
+_geocodificando: dict[str, dict[str, Any]] = {}
+
+
+def _linhas_do_quadro(session_id: str) -> list[dict[str, Any]]:
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    return [asdict(c) for c in consolidados]
+
+
+@router.post("/{session_id}/geocodificar", tags=["mapa"])
+def iniciar_geocodificacao(session_id: str, background_tasks: BackgroundTasks) -> dict[str, Any]:
+    """Localiza no mapa os clientes deste quadro que ainda não têm coordenada (em segundo plano)."""
+    if _geocodificando.get(session_id, {}).get("rodando"):
+        return _geocodificando[session_id]
+    linhas = _linhas_do_quadro(session_id)
+    base, cache = geocodificacao.enderecos_base(), geocodificacao.carregar_cache()
+    faltam = len({geocodificacao.chave_da_linha(l, base) for l in linhas} - set(cache))
+    estado = {"rodando": faltam > 0, "total": faltam, "feitos": 0, "nao_achados": [], "erro": ""}
+    _geocodificando[session_id] = estado
+
+    def tarefa() -> None:
+        def progresso(p: dict[str, Any]) -> None:
+            _geocodificando[session_id].update(p)
+
+        resultado = geocodificacao.geocodificar_linhas(linhas, progresso=progresso)
+        geocodificacao.garantir_deposito()
+        _geocodificando[session_id].update(resultado, rodando=False)
+
+    if faltam:
+        background_tasks.add_task(tarefa)
+    return estado
+
+
+@router.get("/{session_id}/geocodificar", tags=["mapa"])
+def status_geocodificacao(session_id: str) -> dict[str, Any]:
+    linhas = _linhas_do_quadro(session_id)
+    base, cache = geocodificacao.enderecos_base(), geocodificacao.carregar_cache()
+    chaves = {geocodificacao.chave_da_linha(l, base) for l in linhas}
+    return {
+        **_geocodificando.get(session_id, {"rodando": False}),
+        "clientes": len(chaves),
+        "localizados": len(chaves & set(cache)),
+        "sem_endereco_na_base": not base,
+    }
+
+
+class _PosicaoManual(BaseModel):
+    id_item: str
+    lat: float
+    lon: float
+
+
+@router.post("/{session_id}/geo/corrigir", tags=["mapa"])
+def corrigir_posicao(session_id: str, body: _PosicaoManual) -> dict[str, Any]:
+    """Operador arrastou o marcador: vale para este cliente daqui para frente."""
+    linha = next((l for l in _linhas_do_quadro(session_id) if mesma_linha(l, body.id_item)), None)
+    if not linha:
+        raise HTTPException(status_code=404, detail="Linha não encontrada.")
+    chave = geocodificacao.chave_da_linha(linha)
+    geocodificacao.definir_manual(chave, body.lat, body.lon)
+    return {"ok": True, "chave": chave}
+
+
+class _OtimizarBody(BaseModel):
+    veiculo_id: str = ""
+
+
+@router.post("/{session_id}/otimizar-sequencia", response_model=MoverPedidoResponseSchema, tags=["mapa"])
+def otimizar_sequencia(session_id: str, body: _OtimizarBody) -> MoverPedidoResponseSchema:
+    """Melhor ordem de entrega (OR-Tools) — um caminhão ou todos os abertos."""
+    from dias_uteis import parse_data_br  # noqa: F401
+    from otimizacao import janela_recebimento, otimizar
+
+    params = carregar_parametros()
+    deposito = geocodificacao.deposito(params)
+    inicio = str(params.get("inicio_expediente", "07:00"))
+    try:
+        h, _, mnt = inicio.partition(":")
+        inicio_min = int(h) * 60 + int(mnt or 0)
+    except ValueError:
+        inicio_min = 7 * 60
+    cache, base = _geo_contexto()
+    consolidados = {l.get("id_item"): l for l in _linhas_do_quadro(session_id)}
+
+    def aplicar(m: MotorLogistica) -> tuple[bool, str]:
+        nomes = _nomes_veiculos(m)
+        alvo = [body.veiculo_id] if body.veiculo_id else [v for v in m.itens_por_veiculo if v not in m.veiculos_fechados]
+        partes = []
+        for vid in alvo:
+            itens = m.itens_por_veiculo.get(vid, [])
+            if len(itens) < 2:
+                continue
+            paradas: dict[str, dict[str, Any]] = {}
+            for it in itens:
+                chave = f"{it.cliente_codigo}|{it.cidade_destino}".upper()
+                if chave in paradas:
+                    continue
+                linha = {**consolidados.get(it.id_item, {}), **{k: v for k, v in asdict(it).items() if v}}
+                ponto = geocodificacao.coordenada_da_linha(linha, cache, base)
+                paradas[chave] = {
+                    "id": chave,
+                    "lat": ponto["lat"] if ponto else None,
+                    "lon": ponto["lon"] if ponto else None,
+                    "janela": janela_recebimento(linha.get("obs_recebimento", "")),
+                }
+            r = otimizar(list(paradas.values()), deposito, inicio_min,
+                         descarga_min=int(params.get("tempo_descarga_minutos", 20)))
+            m.aplicar_sequencia(vid, r["ordem"])
+            texto = f"{nomes.get(vid, vid)}: {r['km_antes']:.0f} km → {r['km_depois']:.0f} km"
+            partes.append(texto + (f" ({r['aviso']})" if r["aviso"] else ""))
+        if not partes:
+            return True, "Nada para otimizar (caminhões com menos de 2 paradas ou fechados)."
+        return True, "Sequência otimizada — " + "; ".join(partes) + ". Distância estimada (linha reta × 1,3)."
+
+    return _operar_divisao(session_id, aplicar)
 
 
 @router.post("/{session_id}/veiculos/{veiculo_id}/equipe", response_model=MoverPedidoResponseSchema)

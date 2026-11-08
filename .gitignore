@@ -75,3 +75,7 @@ data/representantes_aprendidos.json
 
 # Nomes de motoristas/ajudantes por caminhão (dados da empresa)
 data/equipe_padrao.json
+
+# Coordenadas dos clientes (cache de geocodificacao)
+data/geocache.json
+data/geocache.tmp
