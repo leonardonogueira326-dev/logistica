@@ -207,7 +207,9 @@ class MotorLogistica:
                 continue
 
             data_prev = (c.data_prevista_recebimento or "").strip()
-            if data_prev and data_prev > hoje:
+            # "Hoje" = Data para Faturamento do PDF (reprocessar PDF antigo dá o mesmo resultado)
+            referencia = (getattr(c, "data_referencia", "") or hoje).strip()
+            if data_prev and data_prev > referencia:
                 self.backlog_futuro.append(
                     {
                         "numero_pedido": c.numero_pedido,
@@ -222,6 +224,8 @@ class MotorLogistica:
                         "rota_logistica": c.rota_logistica,
                         "peso_kg": str(c.peso_kg),
                         "motivo": c.motivo_atraso or "RECEBIMENTO POSTERGADO",
+                        "consulta_representante": getattr(c, "consulta_representante", ""),
+                        "dias_uteis_antecedencia": str(getattr(c, "dias_uteis_antecedencia", "") or ""),
                         "data_prevista_recebimento": data_prev,
                         "tipo_backlog": config.COD_BACKLOG_FUTURO,
                         "aceita_antecipacao": c.aceita_antecipacao or "SIM",

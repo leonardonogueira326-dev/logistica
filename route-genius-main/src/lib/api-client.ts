@@ -2,6 +2,8 @@ import type {
   AnteciparPedidoBody,
   DividirCargaRequest,
   OperacaoDivisao,
+  ConsultaRepresentanteRequest,
+  ConsultaRepresentanteResponse,
   AnteciparPedidoResponse,
   ConfigResponse,
   ConfiguracaoOperacional,
@@ -198,6 +200,18 @@ export async function saveSetup(config: ConfiguracaoOperacional): Promise<SetupR
 export async function buscarHistorico(q: string, limite = 20): Promise<HistoricoResponse> {
   const params = new URLSearchParams({ q, limite: String(limite) });
   return request<HistoricoResponse>(`/historico?${params}`);
+}
+
+/** Resposta do representante: pode carregar hoje? */
+export async function registrarConsultaRepresentante(
+  sessionId: string,
+  body: ConsultaRepresentanteRequest,
+): Promise<ConsultaRepresentanteResponse> {
+  return request<ConsultaRepresentanteResponse>(`/sessions/${sessionId}/consulta-representante`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 /** Dividir / ajustar / juntar / confirmar divisão de uma carga. */

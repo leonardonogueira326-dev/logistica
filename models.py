@@ -103,6 +103,13 @@ class PedidoConsolidado:
     seq_solicitacao: str = ""
     ja_programado_kg: float = 0.0
     ja_programado_info: str = ""
+    representante_codigo: str = ""
+    # Consulta ao representante: Dt. Produção a N dias úteis ou mais da data do PDF
+    data_referencia: str = ""  # Data para Faturamento do PDF (ISO)
+    dias_uteis_antecedencia: int = 0
+    consulta_representante: str = ""  # "", PENDENTE, LIBERADO, NAO_LIBERADO
+    consulta_obs: str = ""
+    consulta_em: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     peso_kg: float = 0.0

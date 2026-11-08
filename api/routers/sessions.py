@@ -24,6 +24,8 @@ from api.schemas import (  # noqa: E402
     IngestaoResponseSchema,
     AjustarDivisaoSchema,
     CargaRefSchema,
+    ConsultaRepresentanteBodySchema,
+    ConsultaRepresentanteResponseSchema,
     DividirCargaSchema,
     MoverPedidoSchema,
     MoverPedidoResponseSchema,
@@ -535,6 +537,83 @@ def dividir_carga(session_id: str, body: DividirCargaSchema) -> MoverPedidoRespo
         ok=True,
         warning=mensagem,
         roteirizacao=_roteirizacao_from_motor(motor, session_id),
+    )
+
+
+@router.post(
+    "/{session_id}/consulta-representante", response_model=ConsultaRepresentanteResponseSchema
+)
+def registrar_consulta_representante(
+    session_id: str, body: ConsultaRepresentanteBodySchema
+) -> ConsultaRepresentanteResponseSchema:
+    """
+    Registra a resposta do representante para uma ou mais linhas.
+
+    LIBERADO: a linha sai do "Consultar representante" e entra na rota de hoje
+    (se a roteirização já foi feita, vai direto para um caminhão compatível).
+    NAO_LIBERADO: continua parada até a Dt. Produção. PENDENTE: desfaz a resposta.
+    """
+    try:
+        store.session_path(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada.")
+
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    agora = datetime.now(timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
+    quem = body.autorizado_por.strip()
+    rotulo = {"LIBERADO": "Liberado", "NAO_LIBERADO": "Não liberado", "PENDENTE": "Pendente"}[body.resultado]
+
+    atualizados = 0
+    liberados: list[str] = []
+    for id_linha in body.ids:
+        ref = next((c for c in consolidados if mesma_linha(c, id_linha)), None)
+        if not ref:
+            continue
+        linha_audit = f"CONSULTA REPRESENTANTE {agora}: {rotulo}"
+        if quem:
+            linha_audit += f" por {quem}"
+        if body.obs.strip():
+            linha_audit += f" — {body.obs.strip()}"
+        patch: dict[str, Any] = {
+            "consulta_representante": body.resultado,
+            "consulta_em": agora if body.resultado != "PENDENTE" else "",
+            "consulta_obs": body.obs.strip(),
+            "auditoria": (ref.auditoria + " | " + linha_audit).strip(" |"),
+        }
+        if body.resultado == "LIBERADO":
+            patch.update(
+                data_prevista_recebimento="",
+                representante_autorizou=quem or ref.representante,
+                motivo_adiantamento=f"Liberado pelo representante {quem or ref.representante}",
+            )
+            liberados.append(ref.id_item or id_linha)
+        elif ref.consulta_representante == "LIBERADO" and not ref.data_prevista_recebimento:
+            # voltou atrás: devolve a data de produção para ela ficar parada de novo
+            from dias_uteis import parse_data_br
+
+            prod = parse_data_br(ref.data_producao)
+            patch["data_prevista_recebimento"] = prod.isoformat() if prod else ""
+        if _patch_consolidado_session(session_id, ref.id_item or id_linha, patch):
+            atualizados += 1
+
+    alocados: dict[str, str] = {}
+    rote_data = store.load_roteirizacao(session_id)
+    if rote_data and liberados:
+        motor = _motor_from_roteirizacao(rote_data)
+        nomes = {r.veiculo_id: r.veiculo_nome for r in motor.rotas}
+        for id_linha in liberados:
+            ok, _, destino = motor.antecipar_para_hoje(id_linha)
+            if ok:
+                alocados[id_linha] = nomes.get(destino, "fila de hoje")
+        store.save_roteirizacao(session_id, motor.para_dict())
+
+    msg = f"{atualizados} linha(s) marcada(s) como {rotulo.lower()}."
+    if alocados:
+        msg += " Entraram na rota: " + ", ".join(sorted(set(alocados.values()))) + "."
+    elif liberados and not rote_data:
+        msg += " Elas entram na rota na próxima roteirização."
+    return ConsultaRepresentanteResponseSchema(
+        ok=atualizados > 0, atualizados=atualizados, message=msg, alocados=alocados
     )
 
 
