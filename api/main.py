@@ -69,6 +69,22 @@ def health() -> HealthSchema:
 # um processo, uma porta (http://SERVIDOR:8000), sem Node rodando em produção.
 _FRONT = PROJECT_ROOT / "route-genius-main" / "dist" / "client"
 _SHELL = _FRONT / "_shell.html"
+# No Windows, o Python lê os tipos de arquivo do registro, que muitas vezes
+# diz que .js é "text/plain". O navegador então recusa os scripts e a tela
+# fica em branco. Fixamos os tipos aqui.
+import mimetypes as _mimetypes
+
+for _ext, _tipo in {
+    ".js": "application/javascript",
+    ".mjs": "application/javascript",
+    ".css": "text/css",
+    ".svg": "image/svg+xml",
+    ".json": "application/json",
+    ".woff2": "font/woff2",
+    ".html": "text/html",
+}.items():
+    _mimetypes.add_type(_tipo, _ext)
+
 if _SHELL.exists():
     from fastapi import HTTPException as _HTTPException
     from fastapi.responses import FileResponse
