@@ -542,6 +542,19 @@ class MotorLogistica:
             )
         return len(base.backlog_futuro) + len(base.backlog_local) + len(partes)
 
+    def aplicar_sequencia(self, veiculo_id: str, ordem_paradas: list[str]) -> None:
+        """
+        Reordena o caminhão pela ordem de PARADAS (chave cliente|cidade) e
+        renumera a sequência de entrega (1 = primeira entrega).
+        """
+        itens = self.itens_por_veiculo.get(veiculo_id, [])
+        posicao = {chave: i for i, chave in enumerate(ordem_paradas)}
+        chave = lambda it: f"{it.cliente_codigo}|{it.cidade_destino}".upper()  # noqa: E731
+        itens.sort(key=lambda it: posicao.get(chave(it), len(posicao)))
+        for seq, it in enumerate(itens, 1):
+            it.sequencia_lifo = str(seq)
+        self.itens_por_veiculo[veiculo_id] = itens
+
     def tirar_do_caminhao_por_pendencia(self, id_item: str, motivo: str) -> str:
         """
         A linha voltou a ter pendência (ex.: desfez a liberação): sai do caminhão
