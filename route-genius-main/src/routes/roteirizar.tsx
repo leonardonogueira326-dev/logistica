@@ -1,8 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Download, Info, LayoutGrid, Loader2, Map, Zap } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
-import { MapaRoteirizacao } from "@/components/logistica/MapaRoteirizacao";
 import { RouteKanbanBoard } from "@/components/logistica/RouteKanbanBoard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -10,6 +9,11 @@ import {
   useLogisticaSession,
 } from "@/hooks/useLogisticaSession";
 import { exportarRomaneio, exportarRomaneioCaminhao } from "@/lib/api-client";
+
+// Leaflet acessa `window` ao ser importado: o mapa só pode carregar no navegador.
+const MapaRoteirizacao = lazy(() =>
+  import("@/components/logistica/MapaRoteirizacao").then((m) => ({ default: m.MapaRoteirizacao })),
+);
 import type { PedidoConsolidado } from "@/lib/logistica-types";
 import { cn } from "@/lib/utils";
 
@@ -194,7 +198,11 @@ function RoteirizarPage() {
           </TabsContent>
 
           <TabsContent value="mapa" className="mt-4">
-            <MapaRoteirizacao data={data} consolidadosByPedido={consolidadosByPedido} />
+            {typeof window !== "undefined" && (
+              <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Carregando mapa…</div>}>
+                <MapaRoteirizacao data={data} consolidadosByPedido={consolidadosByPedido} />
+              </Suspense>
+            )}
           </TabsContent>
         </Tabs>
       )}

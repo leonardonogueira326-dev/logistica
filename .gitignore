@@ -54,3 +54,18 @@ route-genius-main/*.local
 
 # Logs
 *.log
+
+# Bases de clientes/transportadoras e dados derivados (dados da empresa — nunca versionar)
+base-de-clientes*.xlsx
+base-transportadoras*.xlsx
+*.xlsx - *.csv
+data/cadastro_mestre_geolocalizado.json
+DEBUG_INGESTAO*.xlsx
+ingestao_teste_*.json
+
+# PDFs/planilhas reais para os testes automáticos (ficam só no PC)
+dados_teste/
+
+# Pacote de atualização entregue pelo Claude
+*.bundle
+_aplicar_melhorias.bat

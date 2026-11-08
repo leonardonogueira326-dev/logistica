@@ -212,7 +212,14 @@ export function RouteKanbanBoard({
           auditoria: "",
           observacao_comercial: "",
           data_producao: String((card as Record<string, string>).data_producao ?? ""),
-        };
+          revisao_obrigatoria: "NAO",
+          motivo_quarentena: "",
+          palavra_chave_quarentena: "",
+          flag_revisao_llm: "NAO",
+          sugestao_llm_status: "",
+          status_ia: "NAO_APLICAVEL",
+          tipo_frete_regex: "",
+        } as PedidoConsolidado;
       }
     }
     return null;

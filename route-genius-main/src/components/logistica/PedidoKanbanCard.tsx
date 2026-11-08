@@ -42,7 +42,7 @@ export function PedidoKanbanCard({
   onMoveTo: (destino: string) => void;
   onOpenAudit?: (numeroPedido: string) => void;
   onAntecipar?: (numeroPedido: string) => void;
-  variant?: "default" | "futuro";
+  variant?: "default" | "futuro" | "local" | "retorno";
   dragging?: boolean;
 }) {
   const id = getCardId(pedido);

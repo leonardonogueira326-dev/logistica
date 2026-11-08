@@ -25,50 +25,39 @@ logistica/
 └── requirements.txt
 ```
 
-## Pré-requisitos
+## Como rodar (Windows)
 
-- Python 3.10 ou superior
-- Node.js 20+ e npm
-- Cadastro mestre de clientes: `TESTE.xlsx` na raiz do projeto (não vai para o Git — dados sensíveis)
+Pré-requisitos (uma vez só): [Python 3.10+](https://www.python.org/downloads/) (marque *Add python.exe to PATH*), [Node.js 20+](https://nodejs.org/) e, opcional para a IA, [Ollama](https://ollama.com).
 
-## Instalação
+1. **Instalar:** dois cliques em `instalar.bat` (cria o `.venv`, instala as dependências e baixa o modelo de IA).
+2. **Usar:** dois cliques em `iniciar.bat`. Abrem duas janelas (API e Tela) — não feche — e o navegador em http://localhost:5173.
+3. **Testar:** `rodar_testes.bat`. Para incluir os PDFs reais nos testes, copie-os para `dados_teste\`.
 
-### Backend
+Arquivos que ficam só no PC (o `.gitignore` bloqueia — são dados da empresa):
+`base-de-clientes.xlsx`, `base-transportadoras.xlsx`, PDFs, XLSB, MSG, `ROTA DIARIA*.xlsx`, `data/cadastro_mestre_geolocalizado.json`, `data/sessions/`.
+
+### Rodar manualmente (sem os .bat)
 
 ```powershell
-cd logistica
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements.txt pytest
+uvicorn api.main:app --reload --port 8000          # terminal 1
+cd route-genius-main; npm install; npm run dev     # terminal 2
 ```
-
-### Frontend
-
-```powershell
-cd route-genius-main
-npm install
-```
-
-## Executar (desenvolvimento)
-
-Terminal 1 — API:
-
-```powershell
-cd logistica
-.venv\Scripts\Activate.ps1
-uvicorn api.main:app --reload --port 8000
-```
-
-Terminal 2 — Frontend:
-
-```powershell
-cd route-genius-main
-npm run dev
-```
-
-Acesse: http://localhost:5173
 
 O Vite faz proxy de `/api` → `http://127.0.0.1:8000`.
+
+### IA local
+
+A IA **ajuda, não decide**: só é consultada quando regras aprendidas, memória e regex não resolvem, e a sugestão sempre passa pela conferência. Sem Ollama o sistema funciona normalmente.
+Modelo padrão: `qwen2.5:3b` (troque em `iniciar.bat` via `LOGISTICA_OLLAMA_MODEL`).
+
+## Testes e catálogo de pegadinhas
+
+`tests/test_pegadinhas.py` é o catálogo das armadilhas das observações comerciais
+(pagamento antecipado, "não faturar antes da data", "não enviar parcial", NF no fim do mês…).
+**Achou uma pegadinha nova? Adicione a frase e o resultado esperado ali** — vira regra testada para sempre.
 
 ## Fluxo diário
 
@@ -105,16 +94,3 @@ Copie esses arquivos manualmente em cada ambiente.
 | GET | `/api/sessions/{id}/exportar-romaneio` | Download Excel romaneio |
 
 Documentação interativa: http://127.0.0.1:8000/docs
-
-## Publicar no GitHub
-
-```powershell
-git init
-git add .
-git commit -m "feat: MVP logística Superfine — ingestão, quarentena, roteirização e romaneio"
-git branch -M main
-git remote add origin https://github.com/SEU_USUARIO/logistica.git
-git push -u origin main
-```
-
-Substitua `SEU_USUARIO/logistica` pelo repositório criado no GitHub.

@@ -5,13 +5,16 @@ Integração com LLM local (Ollama / qwen2) para classificação de observaçõe
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.error
 import urllib.request
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "qwen2:1.5b"
-TIMEOUT_SEC = 15
+# Configurável por variável de ambiente (ver iniciar.bat). Modelos maiores
+# entendem melhor negações ("NÃO é retira"), mas pedem mais RAM.
+OLLAMA_URL = os.environ.get("LOGISTICA_OLLAMA_URL", "http://localhost:11434/api/generate")
+OLLAMA_MODEL = os.environ.get("LOGISTICA_OLLAMA_MODEL", "qwen2.5:3b")
+TIMEOUT_SEC = int(os.environ.get("LOGISTICA_OLLAMA_TIMEOUT", "30"))
 
 STATUS_ADMINISTRATIVO = "ADMINISTRATIVO"
 STATUS_VALIDOS = frozenset(
