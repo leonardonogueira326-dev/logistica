@@ -159,6 +159,8 @@ export interface ItemRota {
   /** "1/2", "2/2"... quando a linha foi dividida entre caminhões */
   parte?: string;
   peso_total_linha?: number;
+  /** "SIM" = dividida pelo sistema e ainda não conferida pelo operador */
+  divisao_automatica?: string;
   cliente: string;
   cliente_codigo: string;
   representante: string;
@@ -220,6 +222,18 @@ export interface DividirCargaRequest {
   id_carga: string;
   peso_kg: number;
 }
+
+export interface AjustarDivisaoRequest {
+  id_carga: string;
+  peso_kg: number;
+  id_carga_contrapartida?: string;
+}
+
+export type OperacaoDivisao =
+  | { op: "dividir"; body: DividirCargaRequest }
+  | { op: "ajustar"; body: AjustarDivisaoRequest }
+  | { op: "juntar"; body: { id_carga: string } }
+  | { op: "confirmar"; body: { id_carga: string } };
 
 export interface MoverPedidoResponse {
   ok: boolean;

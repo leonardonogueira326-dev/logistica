@@ -33,7 +33,7 @@ export function PedidoKanbanCard({
   onMoveTo,
   onOpenAudit,
   onAntecipar,
-  onDividir,
+  onDivisao,
   variant = "default",
   dragging,
 }: {
@@ -43,7 +43,7 @@ export function PedidoKanbanCard({
   onMoveTo: (destino: string) => void;
   onOpenAudit?: (numeroPedido: string) => void;
   onAntecipar?: (numeroPedido: string) => void;
-  onDividir?: () => void;
+  onDivisao?: { dividir: () => void; ajustar: () => void; juntar: () => void; confirmar: () => void };
   variant?: "default" | "futuro" | "local" | "retorno";
   dragging?: boolean;
 }) {
@@ -69,6 +69,7 @@ export function PedidoKanbanCard({
   const numeroPedido = String(pedido.numero_pedido ?? "");
   const parte = String(raw.parte ?? "");
   const pesoTotalLinha = Number(raw.peso_total_linha ?? 0);
+  const divisaoAutomatica = raw.divisao_automatica === "SIM";
   const of = String(raw.of_ano ?? "");
 
   return (
@@ -141,6 +142,11 @@ export function PedidoKanbanCard({
                   Backlog Futuro
                 </Badge>
               )}
+              {divisaoAutomatica && (
+                <Badge className="text-[10px] px-1.5 py-0 h-5 bg-amber-500/15 text-amber-700 border border-amber-500/40 hover:bg-amber-500/15">
+                  Divisão automática — conferir
+                </Badge>
+              )}
               {parte && (
                 <Badge
                   variant="outline"
@@ -180,8 +186,17 @@ export function PedidoKanbanCard({
             <DropdownMenuItem onClick={() => onOpenAudit?.(id)}>
               Ver auditoria
             </DropdownMenuItem>
-            {onDividir && peso > 1 && (
-              <DropdownMenuItem onClick={() => onDividir()}>Dividir carga…</DropdownMenuItem>
+            {onDivisao && (
+              <>
+                <DropdownMenuSeparator />
+                {peso > 1 && <DropdownMenuItem onClick={onDivisao.dividir}>Dividir carga…</DropdownMenuItem>}
+                {parte && <DropdownMenuItem onClick={onDivisao.ajustar}>Ajustar divisão…</DropdownMenuItem>}
+                {parte && <DropdownMenuItem onClick={onDivisao.juntar}>Juntar partes</DropdownMenuItem>}
+                {divisaoAutomatica && (
+                  <DropdownMenuItem onClick={onDivisao.confirmar}>Confirmar divisão</DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+              </>
             )}
             {destinos
               .filter((d) => d.id !== columnId)

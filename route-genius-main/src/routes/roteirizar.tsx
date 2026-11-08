@@ -9,6 +9,7 @@ import {
   useLogisticaSession,
 } from "@/hooks/useLogisticaSession";
 import { exportarRomaneio, exportarRomaneioCaminhao } from "@/lib/api-client";
+import type { OperacaoDivisao } from "@/lib/logistica-types";
 
 // Leaflet acessa `window` ao ser importado: o mapa só pode carregar no navegador.
 const MapaRoteirizacao = lazy(() =>
@@ -108,9 +109,9 @@ function RoteirizarPage() {
     }
   };
 
-  const handleDividir = async (payload: { id_carga: string; peso_kg: number }) => {
+  const handleDivisao = async (operacao: OperacaoDivisao) => {
     if (!sessionId) return;
-    const resp = await dividirMutation.mutateAsync({ sid: sessionId, body: payload });
+    const resp = await dividirMutation.mutateAsync({ sid: sessionId, operacao });
     setLastWarning(resp.warning ?? "");
   };
 
@@ -194,7 +195,7 @@ function RoteirizarPage() {
               data={data}
               loading={moverMutation.isPending || anteciparMutation.isPending || dividirMutation.isPending}
               onMove={handleMove}
-              onDividir={handleDividir}
+              onDivisao={handleDivisao}
               onAntecipar={handleAntecipar}
               onExportRomaneio={handleExportRomaneioCaminhao}
               exportingCaminhaoId={exportingCaminhaoId}
