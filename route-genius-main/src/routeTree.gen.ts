@@ -9,20 +9,12 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as ValidacaoRouteImport } from './routes/validacao'
 import { Route as UploadRouteImport } from './routes/upload'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as RoteirizarRouteImport } from './routes/roteirizar'
-import { Route as RetirasRouteImport } from './routes/retiras'
-import { Route as RepresentantesRouteImport } from './routes/representantes'
-import { Route as BloqueadosRouteImport } from './routes/bloqueados'
+import { Route as PendenciasRouteImport } from './routes/pendencias'
 import { Route as IndexRouteImport } from './routes/index'
 
-const ValidacaoRoute = ValidacaoRouteImport.update({
-  id: '/validacao',
-  path: '/validacao',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const UploadRoute = UploadRouteImport.update({
   id: '/upload',
   path: '/upload',
@@ -38,19 +30,9 @@ const RoteirizarRoute = RoteirizarRouteImport.update({
   path: '/roteirizar',
   getParentRoute: () => rootRouteImport,
 } as any)
-const RetirasRoute = RetirasRouteImport.update({
-  id: '/retiras',
-  path: '/retiras',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RepresentantesRoute = RepresentantesRouteImport.update({
-  id: '/representantes',
-  path: '/representantes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BloqueadosRoute = BloqueadosRouteImport.update({
-  id: '/bloqueados',
-  path: '/bloqueados',
+const PendenciasRoute = PendenciasRouteImport.update({
+  id: '/pendencias',
+  path: '/pendencias',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -61,88 +43,44 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/bloqueados': typeof BloqueadosRoute
-  '/representantes': typeof RepresentantesRoute
-  '/retiras': typeof RetirasRoute
+  '/pendencias': typeof PendenciasRoute
   '/roteirizar': typeof RoteirizarRoute
   '/setup': typeof SetupRoute
   '/upload': typeof UploadRoute
-  '/validacao': typeof ValidacaoRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/bloqueados': typeof BloqueadosRoute
-  '/representantes': typeof RepresentantesRoute
-  '/retiras': typeof RetirasRoute
+  '/pendencias': typeof PendenciasRoute
   '/roteirizar': typeof RoteirizarRoute
   '/setup': typeof SetupRoute
   '/upload': typeof UploadRoute
-  '/validacao': typeof ValidacaoRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/bloqueados': typeof BloqueadosRoute
-  '/representantes': typeof RepresentantesRoute
-  '/retiras': typeof RetirasRoute
+  '/pendencias': typeof PendenciasRoute
   '/roteirizar': typeof RoteirizarRoute
   '/setup': typeof SetupRoute
   '/upload': typeof UploadRoute
-  '/validacao': typeof ValidacaoRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/bloqueados'
-    | '/representantes'
-    | '/retiras'
-    | '/roteirizar'
-    | '/setup'
-    | '/upload'
-    | '/validacao'
+  fullPaths: '/' | '/pendencias' | '/roteirizar' | '/setup' | '/upload'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/bloqueados'
-    | '/representantes'
-    | '/retiras'
-    | '/roteirizar'
-    | '/setup'
-    | '/upload'
-    | '/validacao'
-  id:
-    | '__root__'
-    | '/'
-    | '/bloqueados'
-    | '/representantes'
-    | '/retiras'
-    | '/roteirizar'
-    | '/setup'
-    | '/upload'
-    | '/validacao'
+  to: '/' | '/pendencias' | '/roteirizar' | '/setup' | '/upload'
+  id: '__root__' | '/' | '/pendencias' | '/roteirizar' | '/setup' | '/upload'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  BloqueadosRoute: typeof BloqueadosRoute
-  RepresentantesRoute: typeof RepresentantesRoute
-  RetirasRoute: typeof RetirasRoute
+  PendenciasRoute: typeof PendenciasRoute
   RoteirizarRoute: typeof RoteirizarRoute
   SetupRoute: typeof SetupRoute
   UploadRoute: typeof UploadRoute
-  ValidacaoRoute: typeof ValidacaoRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/validacao': {
-      id: '/validacao'
-      path: '/validacao'
-      fullPath: '/validacao'
-      preLoaderRoute: typeof ValidacaoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/upload': {
       id: '/upload'
       path: '/upload'
@@ -164,25 +102,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RoteirizarRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/retiras': {
-      id: '/retiras'
-      path: '/retiras'
-      fullPath: '/retiras'
-      preLoaderRoute: typeof RetirasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/representantes': {
-      id: '/representantes'
-      path: '/representantes'
-      fullPath: '/representantes'
-      preLoaderRoute: typeof RepresentantesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/bloqueados': {
-      id: '/bloqueados'
-      path: '/bloqueados'
-      fullPath: '/bloqueados'
-      preLoaderRoute: typeof BloqueadosRouteImport
+    '/pendencias': {
+      id: '/pendencias'
+      path: '/pendencias'
+      fullPath: '/pendencias'
+      preLoaderRoute: typeof PendenciasRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -197,13 +121,10 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  BloqueadosRoute: BloqueadosRoute,
-  RepresentantesRoute: RepresentantesRoute,
-  RetirasRoute: RetirasRoute,
+  PendenciasRoute: PendenciasRoute,
   RoteirizarRoute: RoteirizarRoute,
   SetupRoute: SetupRoute,
   UploadRoute: UploadRoute,
-  ValidacaoRoute: ValidacaoRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

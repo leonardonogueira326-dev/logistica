@@ -8,12 +8,15 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Truck, Inbox, PackageSearch, Loader2, AlertTriangle, CalendarClock, Download, MapPin, Clock, Lock, LockOpen } from "lucide-react";
+import { Truck, Inbox, PackageSearch, Loader2, AlertTriangle, PhoneCall, Download, MapPin, Clock, Lock, LockOpen } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 
 import { PedidoAuditSheet } from "@/components/logistica/PedidoAuditSheet";
 import { PedidoKanbanCard, getCardId, type CardPedido } from "@/components/logistica/PedidoKanbanCard";
 import { VehicleMetrics } from "@/components/logistica/VehicleMetrics";
+import { BotaoCopiar } from "@/components/BotaoCopiar";
+import { kg, mensagemRepresentante } from "@/lib/mensagens";
 import {
   Tooltip,
   TooltipContent,
@@ -54,7 +57,21 @@ type PendingMove = {
   origem: string;
   destino: string;
   forcar?: boolean;
+  liberarRepresentante?: boolean;
+  autorizadoPor?: string;
 };
+
+const pendenciasDoCard = (p: CardPedido): string[] =>
+  String((p as Record<string, string>).pendencias ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+/** Comercial e peso zerado não sobem no caminhão: ficam na página Pendências. */
+const cardTravado = (p: CardPedido) =>
+  pendenciasDoCard(p).some((x) => x === "PAGAMENTO_ANTECIPADO" || x === "PESO_ZERADO");
+
+const COLUNAS_NAO_VEICULO = new Set([COLUMN_BACKLOG, COLUMN_BACKLOG_FUTURO, COLUMN_BACKLOG_LOCAL, COLUMN_COLETAS]);
 
 /** Motorista / ajudante / placa do caminhão no dia — salva quando o foco sai do grupo. */
 function EquipeEditor({
@@ -132,6 +149,8 @@ export function RouteKanbanBoard({
     destino: string;
     motivo?: string;
     forcar?: boolean;
+    liberar_representante?: boolean;
+    autorizado_por?: string;
   }) => Promise<void>;
   onAntecipar?: (payload: {
     numero_pedido: string;
@@ -169,6 +188,10 @@ export function RouteKanbanBoard({
   const [contrapartida, setContrapartida] = useState("");
   const [erroDividir, setErroDividir] = useState("");
   const [dividindo, setDividindo] = useState(false);
+  const [repModal, setRepModal] = useState<(PendingMove & { titulo: string; representante: string; destinoLabel: string }) | null>(null);
+  const [repQuem, setRepQuem] = useState("");
+  const [repErro, setRepErro] = useState("");
+  const [repSalvando, setRepSalvando] = useState(false);
 
   const tituloCard = (pedido: CardPedido) => {
     const of = String((pedido as Record<string, string>).of_ano ?? "");
@@ -227,14 +250,15 @@ export function RouteKanbanBoard({
     }
 
     return [
-      ...vehicleCols,
       {
         id: COLUMN_BACKLOG_FUTURO,
-        label: "Parados (pendências)",
+        label: "Consultar representante",
         rota: null,
-        icon: CalendarClock,
+        icon: PhoneCall,
         variant: "futuro" as const,
       },
+      { id: COLUMN_BACKLOG, label: "Sobras / Fila de espera", rota: null, icon: Inbox, variant: "default" as const },
+      ...vehicleCols,
       {
         id: COLUMN_BACKLOG_LOCAL,
         label: "Fila de Entregas Locais",
@@ -242,7 +266,6 @@ export function RouteKanbanBoard({
         icon: MapPin,
         variant: "local" as const,
       },
-      { id: COLUMN_BACKLOG, label: "Fila de Espera", rota: null, icon: Inbox, variant: "default" as const },
       { id: COLUMN_COLETAS, label: "Coletas", rota: null, icon: PackageSearch, variant: "default" as const },
     ];
   }, [data.rotas, data.viagens_retorno_habilitadas]);
@@ -261,12 +284,20 @@ export function RouteKanbanBoard({
         ];
       }
     }
-    map[COLUMN_BACKLOG_FUTURO] = [...(data.backlog_futuro ?? [])];
+    // Travados (comercial / peso zerado) ficam na página Pendências.
+    map[COLUMN_BACKLOG_FUTURO] = (data.backlog_futuro ?? [])
+      .filter((b) => !cardTravado(b))
+      .sort((a, b) =>
+        String(a.representante ?? "").localeCompare(String(b.representante ?? "")) ||
+        String(a.cliente ?? "").localeCompare(String(b.cliente ?? "")),
+      );
     map[COLUMN_BACKLOG_LOCAL] = [...(data.backlog_local ?? [])];
     map[COLUMN_BACKLOG] = [...data.backlog];
     map[COLUMN_COLETAS] = [...(data.coletas ?? [])];
     return map;
   }, [columns, data]);
+
+  const travados = useMemo(() => (data.backlog_futuro ?? []).filter(cardTravado), [data.backlog_futuro]);
 
   const auditPedido = useMemo((): PedidoConsolidado | null => {
     if (!auditPedidoId) return null;
@@ -327,11 +358,14 @@ export function RouteKanbanBoard({
         destino: move.destino,
         motivo: move.motivo,
         forcar: move.forcar,
+        liberar_representante: move.liberarRepresentante,
+        autorizado_por: move.autorizadoPor,
       });
       setBacklogModal(null);
       setForceModal(null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao mover";
+      if (move.liberarRepresentante) throw err;
       if (!move.forcar && move.destino !== COLUMN_BACKLOG) {
         setForceMessage(msg);
         setForceModal({ ...move, forcar: true });
@@ -348,9 +382,40 @@ export function RouteKanbanBoard({
       setBacklogModal({ numeroPedido, origem, destino });
       return;
     }
+    if (!COLUNAS_NAO_VEICULO.has(destino)) {
+      const card = (itemsByColumn[origem] ?? []).find((p) => getCardId(p) === numeroPedido);
+      if (card && pendenciasDoCard(card).includes("CONSULTA_REPRESENTANTE")) {
+        const rep = String(card.representante ?? "");
+        setRepQuem(rep);
+        setRepErro("");
+        setRepModal({
+          numeroPedido,
+          origem,
+          destino,
+          titulo: tituloCard(card),
+          representante: rep,
+          destinoLabel: columns.find((c) => c.id === destino)?.label ?? destino,
+        });
+        return;
+      }
+    }
     void executeMove({ numeroPedido, origem, destino });
   };
 
+
+  const confirmarRepresentante = async () => {
+    if (!repModal) return;
+    setRepSalvando(true);
+    setRepErro("");
+    try {
+      await executeMove({ ...repModal, liberarRepresentante: true, autorizadoPor: repQuem.trim() });
+      setRepModal(null);
+    } catch (e) {
+      setRepErro(e instanceof Error ? e.message : "Não foi possível carregar.");
+    } finally {
+      setRepSalvando(false);
+    }
+  };
 
   const operar = async (operacao: OperacaoDivisao) => {
     if (!onDivisao) return;
@@ -471,6 +536,20 @@ export function RouteKanbanBoard({
         </div>
       )}
 
+      {travados.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/30 px-4 py-2.5 text-sm">
+          <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+          <span>
+            {travados.length === 1 ? "1 linha travada" : `${travados.length} linhas travadas`} (comercial ou peso
+            zerado, {kg(travados.reduce((s, b) => s + Number(b.peso_kg ?? 0), 0))}) — não aparecem aqui até serem
+            resolvidas.
+          </span>
+          <Link to="/pendencias" className="font-semibold text-accent underline">
+            Abrir Pendências
+          </Link>
+        </div>
+      )}
+
       {warning && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
           <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -498,6 +577,7 @@ export function RouteKanbanBoard({
               items={itemsByColumn[col.id] ?? []}
               destinos={destinos}
               variant={col.variant}
+              dataRef={Object.values(consolidadosByPedido)[0]?.data_referencia ?? ""}
               onMoveTo={(destino, pedido) =>
                 requestMove(getCardId(pedido), col.id, destino)
               }
@@ -725,6 +805,46 @@ export function RouteKanbanBoard({
         </DialogContent>
       </Dialog>
 
+      <Dialog open={!!repModal} onOpenChange={(o) => !o && !repSalvando && setRepModal(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>O representante liberou?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            <strong className="text-foreground">{repModal?.titulo}</strong> tem Dt. Produção futura. Só carregue em{" "}
+            <strong className="text-foreground">{repModal?.destinoLabel}</strong> se o representante autorizou.
+          </p>
+          <label className="block text-sm">
+            <span className="text-xs font-medium text-muted-foreground">Quem liberou</span>
+            <input
+              className="mt-1 w-full px-3 py-2 text-sm rounded-md border border-input bg-background"
+              value={repQuem}
+              onChange={(e) => setRepQuem(e.target.value)}
+              placeholder={repModal?.representante || "Nome do representante"}
+            />
+          </label>
+          {repErro && <p className="text-sm text-destructive">{repErro}</p>}
+          <DialogFooter>
+            <button
+              type="button"
+              className="px-4 py-2 text-sm rounded-md border"
+              disabled={repSalvando}
+              onClick={() => setRepModal(null)}
+            >
+              Ainda não
+            </button>
+            <button
+              type="button"
+              disabled={repSalvando}
+              className="px-4 py-2 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+              onClick={() => void confirmarRepresentante()}
+            >
+              {repSalvando ? "Carregando…" : "Sim, liberou — carregar"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!anteciparModal} onOpenChange={(o) => !o && setAnteciparModal(null)}>
         <DialogContent>
           <DialogHeader>
@@ -789,6 +909,7 @@ function KanbanColumn({
   items,
   destinos,
   variant = "default",
+  dataRef = "",
   onMoveTo,
   onOpenAudit,
   onAntecipar,
@@ -814,6 +935,7 @@ function KanbanColumn({
   items: CardPedido[];
   destinos: { id: string; label: string }[];
   variant?: "default" | "futuro" | "local" | "retorno";
+  dataRef?: string;
   onMoveTo: (destino: string, pedido: CardPedido) => void;
   onOpenAudit: (numeroPedido: string) => void;
   onAntecipar?: (numeroPedido: string) => void;
@@ -927,7 +1049,7 @@ function KanbanColumn({
         {onSalvarEquipe && <EquipeEditor equipe={equipe} onSalvar={onSalvarEquipe} />}
         {variant === "futuro" && (
           <div className="mt-1 text-[11px] text-muted-foreground">
-            Aguardando representante, comercial ou peso — veja em Pendências / Representante
+            Já pode carregar se o representante liberar — arraste para o caminhão
           </div>
         )}
         {variant === "local" && (
@@ -986,7 +1108,16 @@ function KanbanColumn({
         )}
       </div>
       <div className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[560px]">
-        {items.map((pedido) => (
+        {items.map((pedido, idx) => (
+          <div key={`${id}::${getCardId(pedido)}`} className="space-y-2">
+          {variant === "futuro" &&
+            String(pedido.representante ?? "") !== String(items[idx - 1]?.representante ?? "\u0000") && (
+              <GrupoRepresentante
+                rep={String(pedido.representante ?? "") || "NÃO IDENTIFICADO"}
+                linhas={items.filter((p) => String(p.representante ?? "") === String(pedido.representante ?? ""))}
+                dataRef={dataRef}
+              />
+            )}
           <PedidoKanbanCard
             key={`${id}::${getCardId(pedido)}`}
             pedido={pedido}
@@ -1007,6 +1138,7 @@ function KanbanColumn({
                 : undefined
             }
           />
+          </div>
         ))}
         {items.length === 0 && (
           <div className="text-xs text-center text-muted-foreground py-8 border border-dashed rounded-lg">
@@ -1039,5 +1171,31 @@ function TeoBadge({ teoMin, teoLabel }: { teoMin: number; teoLabel: string }) {
       <Clock className="w-3 h-3" />
       {teoLabel}
     </span>
+  );
+}
+
+/** Cabeçalho de representante na coluna "Consultar representante". */
+function GrupoRepresentante({ rep, linhas, dataRef }: { rep: string; linhas: CardPedido[]; dataRef: string }) {
+  const paraMensagem = linhas.map((p) => {
+    const raw = p as Record<string, string>;
+    return {
+      cliente: String(p.cliente ?? ""),
+      numero_pedido: String(p.numero_pedido ?? ""),
+      of_ano: raw.of_ano ?? "",
+      peso_kg: Number(p.peso_kg ?? 0),
+      data_producao: raw.data_producao ?? "",
+    };
+  });
+  const total = paraMensagem.reduce((s, l) => s + l.peso_kg, 0);
+  return (
+    <div className="mt-1 flex items-center justify-between gap-2 rounded-md bg-muted/60 px-2 py-1.5">
+      <div className="min-w-0">
+        <div className="truncate text-[11px] font-semibold">{rep}</div>
+        <div className="text-[10px] text-muted-foreground">
+          {linhas.length} {linhas.length === 1 ? "linha" : "linhas"} · {kg(total)}
+        </div>
+      </div>
+      <BotaoCopiar pequeno rotulo="Mensagem" texto={mensagemRepresentante(rep, paraMensagem, dataRef)} />
+    </div>
   );
 }

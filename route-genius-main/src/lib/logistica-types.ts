@@ -243,6 +243,9 @@ export interface MoverPedidoRequest {
   destino: string;
   motivo?: string;
   forcar?: boolean;
+  /** Card "Consultar representante" solto num caminhão: o representante liberou. */
+  liberar_representante?: boolean;
+  autorizado_por?: string;
 }
 
 export interface DividirCargaRequest {
