@@ -94,7 +94,7 @@ def _escrever_bloco_veiculo(
         valores = (
             str(item.get("cliente") or ""),
             peso,
-            str(item.get("numero_pedido") or ""),
+            _pedido_com_of(item),
             str(item.get("bairro_destino") or ""),
         )
         for col_idx, valor in enumerate(valores, start=1):
@@ -189,13 +189,21 @@ def _ordenar_itens_entrega(itens: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def _pedido_com_of(item: dict[str, Any]) -> str:
+    """No romaneio, o pedido sai com a OF: o mesmo pedido/item pode ter várias."""
+    numero = str(item.get("numero_pedido") or "")
+    of = str(item.get("of_ano") or "")
+    return f"{numero} OF {of}" if of else numero
+
+
 def _observacao_logistica(
     item: dict[str, Any],
     consolidados_por_pedido: dict[str, dict[str, Any]] | None,
 ) -> str:
     partes: list[str] = []
     numero = str(item.get("numero_pedido") or "")
-    cons = (consolidados_por_pedido or {}).get(numero) or {}
+    mapa = consolidados_por_pedido or {}
+    cons = mapa.get(str(item.get("id_item") or "")) or mapa.get(numero) or {}
 
     status = str(cons.get("status") or "").strip()
     tipo = str(cons.get("tipo_frete") or "").strip()
@@ -323,7 +331,7 @@ def gerar_romaneio_caminhao_xlsx(
             peso = float(item.get("peso_kg") or 0)
             valores = (
                 seq,
-                str(item.get("numero_pedido") or ""),
+                _pedido_com_of(item),
                 str(item.get("cliente") or ""),
                 str(item.get("cidade_destino") or ""),
                 peso,

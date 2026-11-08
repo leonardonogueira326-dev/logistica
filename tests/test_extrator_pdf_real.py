@@ -41,3 +41,20 @@ def test_observacao_nao_vaza_para_nome_do_cliente(pdf):
     for p in ExtratorPDF(str(pdf)).extrair():
         nome = p.cliente_nome.upper()
         assert not any(w in nome for w in proibidas), f"{p.numero_pedido}: {p.cliente_nome}"
+
+
+@pytest.mark.parametrize("pdf", PDFS, ids=lambda p: p.name)
+def test_toda_linha_tem_of_valida_e_diferente_do_pedido(pdf):
+    import re
+
+    for p in ExtratorPDF(str(pdf)).extrair():
+        assert re.fullmatch(r"\d{6}/\d{2}", p.of_ano), f"{p.numero_pedido}: OF '{p.of_ano}'"
+        # bug antigo: a OF era lida do próprio número do pedido (003060/26/002 -> 003060/26)
+        assert not p.numero_pedido.startswith(p.of_ano + "/"), p.numero_pedido
+
+
+@pytest.mark.parametrize("pdf", PDFS, ids=lambda p: p.name)
+def test_pedido_item_of_identifica_cada_linha(pdf):
+    pedidos = ExtratorPDF(str(pdf)).extrair()
+    chaves = [(p.numero_pedido, p.of_ano) for p in pedidos]
+    assert len(chaves) == len(set(chaves)), "pedido+item+OF repetido no mesmo PDF"

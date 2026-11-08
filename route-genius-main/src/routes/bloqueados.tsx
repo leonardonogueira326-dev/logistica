@@ -21,6 +21,7 @@ export const Route = createFileRoute("/bloqueados")({
 
 interface BacklogRow {
   numero_pedido: string;
+  of_ano?: string;
   cliente: string;
   representante: string;
   cidade_destino: string;
@@ -44,6 +45,7 @@ function BloqueadosPage() {
       for (const b of roteirizacao.backlog_futuro ?? []) {
         result.push({
           numero_pedido: b.numero_pedido ?? "",
+          of_ano: b.of_ano ?? "",
           cliente: b.cliente ?? "",
           representante: b.representante ?? "NÃO IDENTIFICADO",
           cidade_destino: b.cidade_destino ?? "",
@@ -56,6 +58,7 @@ function BloqueadosPage() {
       for (const b of roteirizacao.backlog) {
         result.push({
           numero_pedido: b.numero_pedido ?? "",
+          of_ano: b.of_ano ?? "",
           cliente: b.cliente ?? "",
           representante: b.representante ?? "NÃO IDENTIFICADO",
           cidade_destino: b.cidade_destino ?? "",
@@ -70,9 +73,10 @@ function BloqueadosPage() {
     if (consolidados) {
       for (const c of consolidados.consolidados) {
         if (c.status === "LIBERADO") continue;
-        if (result.some((r) => r.numero_pedido === c.numero_pedido)) continue;
+        if (result.some((r) => r.numero_pedido === c.numero_pedido && (r.of_ano ?? "") === (c.of_ano ?? ""))) continue;
         result.push({
           numero_pedido: c.numero_pedido,
+          of_ano: c.of_ano ?? "",
           cliente: c.cliente,
           representante: c.representante || "NÃO IDENTIFICADO",
           cidade_destino: c.cidade_destino || c.cidade,
@@ -161,8 +165,11 @@ function BloqueadosPage() {
             </thead>
             <tbody>
               {filtered.map((r) => (
-                <tr key={`${r.origem}-${r.numero_pedido}`} className="border-t border-border">
-                  <td className="px-4 py-3 font-mono text-xs">{r.numero_pedido}</td>
+                <tr key={`${r.origem}-${r.numero_pedido}-${r.of_ano ?? ""}`} className="border-t border-border">
+                  <td className="px-4 py-3 font-mono text-xs">
+                    {r.numero_pedido}
+                    {r.of_ano && <span className="block text-[10px] text-muted-foreground">OF {r.of_ano}</span>}
+                  </td>
                   <td className="py-3">{r.cliente}</td>
                   <td className="py-3 text-xs">{r.representante}</td>
                   <td className="py-3">{r.cidade_destino}</td>

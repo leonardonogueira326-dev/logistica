@@ -90,14 +90,14 @@ function itemParaPonto(
   caminhao?: string,
 ): PontoMapa | null {
   const coords = coordsDoPedido(
-    item.numero_pedido,
+    item.id_item || item.numero_pedido,
     item.cliente,
     item.peso_kg,
     consolidadosByPedido,
   );
   if (!coords) return null;
   return {
-    key: `${caminhao ?? "pool"}-${item.numero_pedido}`,
+    key: `${caminhao ?? "pool"}-${item.id_carga || item.numero_pedido}`,
     lat: coords.lat,
     lng: coords.lng,
     numeroPedido: item.numero_pedido,
@@ -113,7 +113,7 @@ function backlogParaPonto(
   poolKey: string,
   consolidadosByPedido: Record<string, PedidoConsolidado>,
 ): PontoMapa | null {
-  const numeroPedido = entry.numero_pedido ?? "";
+  const numeroPedido = entry.id_item || entry.numero_pedido || "";
   if (!numeroPedido) return null;
   const coords = coordsDoPedido(
     numeroPedido,
@@ -197,7 +197,7 @@ function MapaRoteirizacaoInner({
         ...(data.itens_retorno_por_veiculo[rota.veiculoId] ?? []),
       ];
       for (const item of itens) {
-        if (!coordsDoPedido(item.numero_pedido, item.cliente, item.peso_kg, consolidadosByPedido)) {
+        if (!coordsDoPedido(item.id_item || item.numero_pedido, item.cliente, item.peso_kg, consolidadosByPedido)) {
           missing += 1;
         }
       }

@@ -17,6 +17,7 @@ import pdfplumber
 import config
 from models import PedidoFaturamento
 from normalizador import (
+    montar_id_item,
     normalizar_codigo_cliente,
     normalizar_pedido,
     normalizar_texto,
@@ -25,6 +26,9 @@ from normalizador import (
 )
 
 MARCADOR_OBS = "\u00a7OBS\u00a7 "
+MARCADOR_OF = "\u00a7OF\u00a7 "
+REGEX_SOLICITACAO = re.compile(r"Solicita[cç][aã]o de Faturamento\s*N[°ºo]?\s*(\d+)", re.IGNORECASE)
+REGEX_DATA_FATURAMENTO = re.compile(r"Data para Faturamento:\s*(\d{2}/\d{2}/\d{2,4})", re.IGNORECASE)
 REGEX_INICIO_ITEM = re.compile(r"^(\d{3})\s+(\d{6}/\d{2}/\d{3})\s+(.+)$")
 REGEX_PESO = re.compile(r"([\d.]+,\d{2})\s*(?:KG|ROLO)\b", re.IGNORECASE)
 REGEX_DATA_PRODUCAO = re.compile(r"\b(\d{2}/\d{2}/\d{2})\b")
@@ -32,7 +36,7 @@ REGEX_MOEDA = re.compile(r"(\d{1,3}(?:\.\d{3})*,\d{2})")
 REGEX_DESTINO = re.compile(r"^Destino:\s*(.+?)\s*-\s*(.+?)\s*$", re.IGNORECASE)
 REGEX_TRANSP = re.compile(r"^Transp:\s*(\d+)\s*-\s*(.+?)\s*$", re.IGNORECASE)
 REGEX_DESCRICAO = re.compile(r"^Descri[cç][aã]o:\s*(.+)$", re.IGNORECASE)
-REGEX_OF_ANO = re.compile(r"\b(\d{6}/\d{2})\b")
+REGEX_OF_ANO = re.compile(r"(?<![\d/])(\d{6}/\d{2})(?![\d/])")
 REGEX_CLIENTE_COD = re.compile(r"(\d{5})\s*-\s*([A-ZÁÀÂÃÉÊÍÓÔÕÚÇa-z].*)")
 REGEX_REPRESENTANTE = re.compile(
     r"Representante:\s*(\d+)\s*-\s*(.+?)(?=\s*Destino:|Transp:|Descri|$)",
@@ -245,10 +249,16 @@ class ExtratorPDF:
 
             linhas = self._extrair_linhas_pdf()
             blocos = self._segmentar_blocos(linhas)
+            solicitacao, data_fat = self._ler_cabecalho()
 
             for indice, bloco in enumerate(blocos, start=1):
                 try:
                     pedido = self._parsear_bloco(bloco)
+                    pedido.numero_solicitacao = solicitacao
+                    pedido.data_faturamento = data_fat
+                    pedido.id_item = montar_id_item(
+                        pedido.numero_pedido, pedido.of_ano, pedido.sequencia
+                    )
                     if pedido.numero_pedido:
                         pedidos.append(pedido)
                 except Exception as exc:
@@ -301,6 +311,8 @@ class ExtratorPDF:
                     continue
                 x_obs = cab[0]["x0"] - 4
                 topo_cab = cab[0]["bottom"]
+                cab_of = [w for w in palavras if w["text"].startswith("OF/") and w["top"] <= topo_cab + 1]
+                x_of = cab_of[0]["x0"] if cab_of else None
 
                 linhas_visuais: list[list[dict]] = []
                 for w in sorted(palavras, key=lambda w: (w["top"], w["x0"])):
@@ -323,6 +335,10 @@ class ExtratorPDF:
                         campo_estruturado = False
                     if esq:
                         saida.append(esq)
+                    if esq and REGEX_INICIO_ITEM.match(esq) and x_of is not None:
+                        of_coluna = self._ler_of_por_caracteres(pagina, linha[0]["top"], x_of)
+                        if of_coluna:
+                            saida.append(f"{MARCADOR_OF}{of_coluna}")
                     if not dir_:
                         continue
                     if re.match(r"^(Representante:|Destino:|Transp:)", dir_, re.IGNORECASE):
@@ -332,6 +348,36 @@ class ExtratorPDF:
                     else:
                         saida.append(f"{MARCADOR_OBS}{dir_}")
         return saida
+
+    def _ler_cabecalho(self) -> tuple[str, str]:
+        """Nº da solicitação e data para faturamento (cabeçalho da 1ª página)."""
+        try:
+            with pdfplumber.open(self.caminho_pdf) as pdf:
+                texto = pdf.pages[0].extract_text() or ""
+        except Exception:  # noqa: BLE001
+            return "", ""
+        m_sol = REGEX_SOLICITACAO.search(texto)
+        m_data = REGEX_DATA_FATURAMENTO.search(texto)
+        return (m_sol.group(1) if m_sol else "", m_data.group(1) if m_data else "")
+
+    @staticmethod
+    def _ler_of_por_caracteres(pagina, topo_linha: float, x_of: float) -> str:
+        """
+        Lê a OF caractere a caractere dentro da coluna "OF/Ano".
+
+        Quando o nome do cliente é longo, o PDF sobrepõe as letras do nome aos
+        dígitos da OF ("D0E0 4887/26" = "DE" + "004887/26"). Pela posição x dá
+        para separar: só dígitos e "/" dentro da faixa da coluna.
+        """
+        faixa = (x_of - 2, x_of + 45)
+        chars = [
+            c for c in pagina.chars
+            if abs(c["top"] - topo_linha) < 3 and faixa[0] <= c["x0"] < faixa[1]
+            and (c["text"].isdigit() or c["text"] == "/")
+        ]
+        texto = "".join(c["text"] for c in sorted(chars, key=lambda c: c["x0"]))
+        m = re.fullmatch(r"(\d{6}/\d{2})", texto)
+        return m.group(1) if m else ""
 
     def _extrair_linhas_texto_corrido(self) -> list[str]:
         """Modo antigo: texto corrido; prefere sem layout quando preserva melhor as colunas."""
@@ -402,9 +448,10 @@ class ExtratorPDF:
     def _parsear_bloco(self, bloco: list[str]) -> PedidoFaturamento:
         """Parseia um bloco de linhas em um PedidoFaturamento."""
         pedido = PedidoFaturamento()
-        pedido.bloco_bruto = "\n".join(l.replace(MARCADOR_OBS, "[OBS] ") for l in bloco)
+        pedido.bloco_bruto = "\n".join(l.replace(MARCADOR_OBS, "[OBS] ").replace(MARCADOR_OF, "[OF] ") for l in bloco)
         obs_coluna = [l[len(MARCADOR_OBS):].strip() for l in bloco if l.startswith(MARCADOR_OBS)]
-        bloco = [l for l in bloco if not l.startswith(MARCADOR_OBS)]
+        of_coluna = next((l[len(MARCADOR_OF):].strip() for l in bloco if l.startswith(MARCADOR_OF)), "")
+        bloco = [l for l in bloco if not l.startswith((MARCADOR_OBS, MARCADOR_OF))]
 
         try:
             primeira = bloco[0]
@@ -433,6 +480,10 @@ class ExtratorPDF:
             pedido.cliente_codigo, pedido.cliente_nome, pedido.of_ano = (
                 self._extrair_cliente_e_of(resto_primeira, bloco)
             )
+            if of_coluna:
+                pedido.of_ano = of_coluna
+            # Restos da OF sobreposta no fim do nome ("RKR ... D0E0 4887/26")
+            pedido.cliente_nome = re.sub(r"\s*\S*\d\S*\s+\d{3,6}/\d{2}\b", "", pedido.cliente_nome).strip()
 
             capturando_descricao = False
             destino_match = re.search(

@@ -33,7 +33,13 @@ export function PedidoAuditSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
         <SheetHeader>
-          <SheetTitle className="font-mono text-base">{pedido.numero_pedido}</SheetTitle>
+          <SheetTitle className="font-mono text-base">
+            {pedido.numero_pedido}
+            {pedido.of_ano && <span className="text-muted-foreground"> · OF {pedido.of_ano}</span>}
+          </SheetTitle>
+          {pedido.ja_programado_info && (
+            <div className="text-xs text-amber-600">{pedido.ja_programado_info}</div>
+          )}
           <SheetDescription className="text-left">
             <span className="font-semibold text-foreground">{pedido.cliente}</span>
           </SheetDescription>

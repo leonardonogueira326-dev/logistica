@@ -10,6 +10,12 @@ from pydantic import BaseModel, Field
 class PedidoConsolidadoSchema(BaseModel):
     numero_pedido: str = ""
     numero_pedido_norm: str = ""
+    id_item: str = ""
+    of_ano: str = ""
+    numero_solicitacao: str = ""
+    seq_solicitacao: str = ""
+    ja_programado_kg: float = 0.0
+    ja_programado_info: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     peso_kg: float = 0.0
@@ -120,6 +126,9 @@ class ValidacaoConfirmarBodySchema(BaseModel):
 
 class ItemRotaSchema(BaseModel):
     numero_pedido: str = ""
+    id_carga: str = ""
+    id_item: str = ""
+    of_ano: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     representante: str = ""
@@ -168,6 +177,8 @@ class RoteirizacaoSchema(BaseModel):
 
 
 class MoverPedidoSchema(BaseModel):
+    # Identidade da carga (id_carga). Mantém o nome do campo por compatibilidade;
+    # aceita também o número do pedido puro quando a linha é única.
     numero_pedido: str
     destino: str
     motivo: str = ""

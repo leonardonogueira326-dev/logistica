@@ -3,6 +3,12 @@
 export interface PedidoConsolidado {
   numero_pedido: string;
   numero_pedido_norm: string;
+  id_item?: string;
+  of_ano?: string;
+  numero_solicitacao?: string;
+  seq_solicitacao?: string;
+  ja_programado_kg?: number;
+  ja_programado_info?: string;
   cliente: string;
   cliente_codigo: string;
   peso_kg: number;
@@ -137,8 +143,19 @@ export function palavraChaveParaAprendizado(row: PedidoConsolidado): string {
   return m?.[1]?.trim() ?? "";
 }
 
+/**
+ * Identidade de uma carga no Kanban: pedido/ano/item + OF (ex.: 003060/26/002#008761/25).
+ * O nº do pedido sozinho se repete (várias OFs por item), então nunca use ele para achar o card.
+ */
+export function idCarga(p: { id_carga?: string; id_item?: string; numero_pedido?: string }): string {
+  return String(p.id_carga || p.id_item || p.numero_pedido || "");
+}
+
 export interface ItemRota {
   numero_pedido: string;
+  id_carga?: string;
+  id_item?: string;
+  of_ano?: string;
   cliente: string;
   cliente_codigo: string;
   representante: string;

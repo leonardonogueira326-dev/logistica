@@ -10,13 +10,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { ItemRota } from "@/lib/logistica-types";
+import { idCarga, type ItemRota } from "@/lib/logistica-types";
 import { cn } from "@/lib/utils";
 
 export type CardPedido = ItemRota | Record<string, string>;
 
 export function getCardId(p: CardPedido) {
-  return String(p.numero_pedido ?? "");
+  return idCarga(p as { id_carga?: string; id_item?: string; numero_pedido?: string });
 }
 
 function formatDataBadge(iso: string): string {
@@ -64,6 +64,8 @@ export function PedidoKanbanCard({
   const oportunidade = raw.oportunidade === "SIM";
   const oportunidadeDica = raw.oportunidade_dica ?? "";
   const isFuturo = variant === "futuro";
+  const numeroPedido = String(pedido.numero_pedido ?? "");
+  const of = String(raw.of_ano ?? "");
 
   return (
     <div
@@ -106,6 +108,12 @@ export function PedidoKanbanCard({
             {bairro && cidade ? ", " : ""}
             {cidade}
           </div>
+          {numeroPedido && (
+            <div className="text-[11px] font-mono text-muted-foreground truncate mt-0.5">
+              {numeroPedido}
+              {of && <span className="text-foreground/70"> · OF {of}</span>}
+            </div>
+          )}
           {oportunidade && oportunidadeDica && (
             <div className="mt-2 flex items-start gap-1.5 text-[11px] text-accent bg-accent/10 border border-accent/30 rounded px-2 py-1">
               <Crosshair className="w-3.5 h-3.5 shrink-0 mt-0.5" />

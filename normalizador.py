@@ -170,3 +170,41 @@ def normalizar_cliente(cliente: Optional[str]) -> str:
         return " ".join(texto.split())
     except Exception:
         return normalizar_texto(cliente)
+
+
+def montar_id_item(numero_pedido: str, of_ano: str = "", sequencia: str = "") -> str:
+    """
+    Identidade de uma linha de faturamento: pedido/ano/item + OF.
+
+    O mesmo pedido/item pode ter várias OFs (003060/26/002 com 3 OFs) e o mesmo
+    item+OF pode voltar em outro dia com o saldo da produção — por isso o número
+    do pedido sozinho não identifica a linha. Sem OF, usa a sequência da
+    solicitação como desempate.
+    """
+    pedido = (numero_pedido or "").strip()
+    of = (of_ano or "").strip()
+    if not pedido:
+        return ""
+    if of:
+        return f"{pedido}#{of}"
+    if sequencia:
+        return f"{pedido}#SEQ{str(sequencia).strip()}"
+    return pedido
+
+
+def mesma_linha(obj, chave: str) -> bool:
+    """
+    True se `obj` (dict ou dataclass) é a linha identificada por `chave`.
+
+    A chave preferida é o id_item (pedido/item#OF). O nº do pedido puro ainda é
+    aceito por compatibilidade, mas só quando não há OF na chave.
+    """
+    if not chave:
+        return False
+    get = obj.get if isinstance(obj, dict) else (lambda k, d="": getattr(obj, k, d))
+    for campo in ("id_carga", "id_item"):
+        if get(campo, "") == chave:
+            return True
+    if "#" in chave:
+        return False
+    return get("numero_pedido", "") == chave or get("numero_pedido_norm", "") == chave

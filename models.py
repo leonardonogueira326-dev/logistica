@@ -16,6 +16,9 @@ class PedidoFaturamento:
     numero_pedido: str = ""
     numero_pedido_norm: str = ""
     sequencia: str = ""
+    numero_solicitacao: str = ""
+    data_faturamento: str = ""
+    id_item: str = ""
     cliente_codigo: str = ""
     cliente_nome: str = ""
     peso_kg: float = 0.0
@@ -92,6 +95,14 @@ class PedidoConsolidado:
 
     numero_pedido: str = ""
     numero_pedido_norm: str = ""
+    # Identidade da linha: pedido/ano/item + OF. Um mesmo pedido/item pode ter
+    # várias OFs, e o mesmo item+OF pode voltar em outro dia (saldo da produção).
+    id_item: str = ""
+    of_ano: str = ""
+    numero_solicitacao: str = ""
+    seq_solicitacao: str = ""
+    ja_programado_kg: float = 0.0
+    ja_programado_info: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     peso_kg: float = 0.0
@@ -141,6 +152,9 @@ class ItemRota:
     """Pedido alocado em uma rota de veículo."""
 
     numero_pedido: str = ""
+    id_carga: str = ""
+    id_item: str = ""
+    of_ano: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     representante: str = ""

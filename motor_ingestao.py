@@ -43,7 +43,7 @@ from normalizador import (
 )
 from param_manager import carregar_parametros
 from quarentena import avaliar_quarentena
-from historico_manager import hash_pedido, pedido_existe_no_historico
+from historico_manager import hash_pedido, linha_ja_arquivada, programado_anteriormente
 
 
 TIPO_FRETE_PARA_STATUS: dict[str, str] = {
@@ -340,11 +340,25 @@ class MotorIngestao:
         for pedido in self.pedidos_pdf:
             try:
                 h_id = hash_pedido(pedido.numero_pedido_norm or pedido.numero_pedido, pedido.cliente_codigo)
-                if pedido_existe_no_historico(pedido.numero_pedido_norm or pedido.numero_pedido, pedido.cliente_codigo):
+                id_item = pedido.id_item or pedido.numero_pedido
+                if linha_ja_arquivada(pedido.numero_solicitacao, pedido.sequencia, id_item):
+                    # Só o MESMO PDF carregado de novo é descartado.
                     self.avisos.append(
-                        f"Pedido {pedido.numero_pedido} ignorado — já consta no histórico ({h_id})"
+                        f"Linha {pedido.sequencia} ({pedido.numero_pedido} OF {pedido.of_ano}) ignorada — "
+                        f"solicitação N°{pedido.numero_solicitacao} já foi conferida."
                     )
                     continue
+                anteriores = programado_anteriormente(id_item)
+                ja_kg = sum(float(r.get("peso_kg") or 0) for r in anteriores)
+                ja_info = ""
+                if anteriores:
+                    partes = [
+                        f"{float(r.get('peso_kg') or 0):,.0f} kg em {str(r.get('data_entrega', ''))[:10]}"
+                        + (f" (sol. {r['numero_solicitacao']})" if r.get("numero_solicitacao") else "")
+                        for r in anteriores
+                    ]
+                    ja_info = "Já programado: " + "; ".join(partes)
+                    self.avisos.append(f"{pedido.numero_pedido} OF {pedido.of_ano}: {ja_info}")
 
                 chave_cli = normalizar_codigo_cliente(pedido.cliente_codigo) if pedido.cliente_codigo else ""
                 mestre = self._lookup_clientes.get(chave_cli) if chave_cli else None
@@ -353,6 +367,12 @@ class MotorIngestao:
                 item = PedidoConsolidado(
                     numero_pedido=pedido.numero_pedido,
                     numero_pedido_norm=pedido.numero_pedido_norm,
+                    id_item=id_item,
+                    of_ano=pedido.of_ano,
+                    numero_solicitacao=pedido.numero_solicitacao,
+                    seq_solicitacao=pedido.sequencia,
+                    ja_programado_kg=ja_kg,
+                    ja_programado_info=ja_info,
                     cliente=pedido.cliente_nome,
                     cliente_codigo=pedido.cliente_codigo,
                     peso_kg=pedido.peso_kg,

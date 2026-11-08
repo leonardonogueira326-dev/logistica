@@ -15,6 +15,28 @@ from normalizador import normalizar_texto, resolver_rota_logistica
 from param_manager import carregar_parametros, rotulo_rota
 
 
+def _cid(obj: Any) -> str:
+    """Identidade da carga (pedido/item + OF [+ parte]); cai no nº do pedido em dados antigos."""
+    if isinstance(obj, dict):
+        return str(obj.get("id_carga") or obj.get("id_item") or obj.get("numero_pedido") or "")
+    return str(
+        getattr(obj, "id_carga", "") or getattr(obj, "id_item", "") or getattr(obj, "numero_pedido", "")
+    )
+
+
+def _mesma_carga(obj: Any, chave: str) -> bool:
+    """
+    Compara pela identidade da carga. Aceita o nº do pedido puro (chamadas
+    antigas), mas só quando a chave não traz OF — senão moveria a linha errada.
+    """
+    if _cid(obj) == chave:
+        return True
+    if "#" in (chave or ""):
+        return False
+    numero = obj.get("numero_pedido") if isinstance(obj, dict) else getattr(obj, "numero_pedido", "")
+    return bool(chave) and numero == chave
+
+
 @dataclass
 class EstadoVeiculo:
     veiculo_id: str = ""
@@ -178,6 +200,9 @@ class MotorLogistica:
                 self.backlog_futuro.append(
                     {
                         "numero_pedido": c.numero_pedido,
+                        "id_carga": c.id_item or c.numero_pedido,
+                        "id_item": c.id_item or c.numero_pedido,
+                        "of_ano": c.of_ano,
                         "cliente": c.cliente,
                         "cliente_codigo": c.cliente_codigo,
                         "representante": c.representante,
@@ -204,6 +229,9 @@ class MotorLogistica:
                 self.backlog_local.append(
                     {
                         "numero_pedido": c.numero_pedido,
+                        "id_carga": c.id_item or c.numero_pedido,
+                        "id_item": c.id_item or c.numero_pedido,
+                        "of_ano": c.of_ano,
                         "cliente": c.cliente,
                         "cliente_codigo": c.cliente_codigo,
                         "representante": c.representante,
@@ -224,6 +252,9 @@ class MotorLogistica:
             pedidos.append(
                 {
                     "numero_pedido": c.numero_pedido,
+                    "id_carga": c.id_item or c.numero_pedido,
+                    "id_item": c.id_item or c.numero_pedido,
+                    "of_ano": c.of_ano,
                     "cliente": c.cliente,
                     "cliente_codigo": c.cliente_codigo,
                     "representante": c.representante,
@@ -273,7 +304,7 @@ class MotorLogistica:
                 continue
 
             self._alocar_item(estado, ancora)
-            alocados_ids.add(ancora["numero_pedido"])
+            alocados_ids.add(_cid(ancora))
             estado.rota_vocacao = ancora["rota_logistica"]
             estado.regiao_predominante = rotulo_rota(estado.rota_vocacao)
 
@@ -282,7 +313,7 @@ class MotorLogistica:
                 ok, _ = self.pode_alocar(pedido, estado)
                 if ok:
                     self._alocar_item(estado, pedido)
-                    alocados_ids.add(pedido["numero_pedido"])
+                    alocados_ids.add(_cid(pedido))
 
             if estado.itens:
                 estados.append(estado)
@@ -290,10 +321,13 @@ class MotorLogistica:
         self.backlog = []
         for rota, lista in clusters.items():
             for p in lista:
-                if p["numero_pedido"] not in alocados_ids:
+                if _cid(p) not in alocados_ids:
                     self.backlog.append(
                         {
                             "numero_pedido": p["numero_pedido"],
+                            "id_carga": _cid(p),
+                            "id_item": p.get("id_item", ""),
+                            "of_ano": p.get("of_ano", ""),
                             "cliente": p["cliente"],
                             "representante": p["representante"],
                             "cidade_destino": p["cidade_destino"],
@@ -400,7 +434,7 @@ class MotorLogistica:
         candidatos: list[dict[str, Any]] = []
         for lista in clusters.values():
             for pedido in lista:
-                if pedido["numero_pedido"] in alocados_ids:
+                if _cid(pedido) in alocados_ids:
                     continue
                 ok, _ = self.pode_alocar(pedido, estado)
                 if ok:
@@ -444,7 +478,7 @@ class MotorLogistica:
         if corredor_alvo is not None:
             for lista in clusters.values():
                 for pedido in lista:
-                    pid = pedido["numero_pedido"]
+                    pid = _cid(pedido)
                     if pid in alocados_ids or pid in vistos:
                         continue
                     if self._corredor_pedido(pedido) == corredor_alvo:
@@ -453,7 +487,7 @@ class MotorLogistica:
 
         for rota in rotas_ok:
             for pedido in clusters.get(rota, []):
-                pid = pedido["numero_pedido"]
+                pid = _cid(pedido)
                 if pid in alocados_ids or pid in vistos:
                     continue
                 fila.append(pedido)
@@ -503,6 +537,9 @@ class MotorLogistica:
     def _dict_para_item(pedido: dict[str, Any], sequencia: int) -> ItemRota:
         return ItemRota(
             numero_pedido=pedido["numero_pedido"],
+            id_carga=_cid(pedido),
+            id_item=str(pedido.get("id_item", "")),
+            of_ano=str(pedido.get("of_ano", "")),
             cliente=pedido["cliente"],
             cliente_codigo=pedido.get("cliente_codigo", ""),
             representante=pedido.get("representante", ""),
@@ -724,7 +761,7 @@ class MotorLogistica:
 
         for vid, itens in self.itens_por_veiculo.items():
             for i, item in enumerate(itens):
-                if item.numero_pedido == numero_pedido:
+                if _mesma_carga(item, numero_pedido):
                     pedido_dict = asdict(item)
                     origem = vid
                     self.itens_por_veiculo[vid].pop(i)
@@ -734,7 +771,7 @@ class MotorLogistica:
 
         if not pedido_dict:
             for i, b in enumerate(self.backlog_futuro):
-                if b.get("numero_pedido") == numero_pedido:
+                if _mesma_carga(b, numero_pedido):
                     pedido_dict = self._backlog_para_pedido(b)
                     self.backlog_futuro.pop(i)
                     origem = config.COD_BACKLOG_FUTURO
@@ -743,7 +780,7 @@ class MotorLogistica:
         if not pedido_dict:
             for vid, itens in self.itens_retorno_por_veiculo.items():
                 for i, item in enumerate(itens):
-                    if item.numero_pedido == numero_pedido:
+                    if _mesma_carga(item, numero_pedido):
                         pedido_dict = asdict(item)
                         origem = self._id_retorno(vid)
                         self.itens_retorno_por_veiculo[vid].pop(i)
@@ -753,7 +790,7 @@ class MotorLogistica:
 
         if not pedido_dict:
             for i, b in enumerate(self.backlog_local):
-                if b.get("numero_pedido") == numero_pedido:
+                if _mesma_carga(b, numero_pedido):
                     pedido_dict = self._backlog_para_pedido(b)
                     self.backlog_local.pop(i)
                     origem = config.COD_BACKLOG_LOCAL
@@ -761,7 +798,7 @@ class MotorLogistica:
 
         if not pedido_dict:
             for i, b in enumerate(self.backlog):
-                if b.get("numero_pedido") == numero_pedido:
+                if _mesma_carga(b, numero_pedido):
                     pedido_dict = self._backlog_para_pedido(b)
                     self.backlog.pop(i)
                     origem = "BACKLOG"
@@ -769,7 +806,7 @@ class MotorLogistica:
 
         if not pedido_dict:
             for i, c in enumerate(self.coletas):
-                if c.get("numero_pedido") == numero_pedido:
+                if _mesma_carga(c, numero_pedido):
                     pedido_dict = self._backlog_para_pedido(c)
                     self.coletas.pop(i)
                     origem = "COLETAS"
@@ -791,6 +828,9 @@ class MotorLogistica:
             self.backlog.append(
                 {
                     "numero_pedido": pedido_dict.get("numero_pedido", ""),
+                    "id_carga": _cid(pedido_dict),
+                    "id_item": pedido_dict.get("id_item", ""),
+                    "of_ano": pedido_dict.get("of_ano", ""),
                     "cliente": pedido_dict.get("cliente", ""),
                     "representante": pedido_dict.get("representante", ""),
                     "cidade_destino": pedido_dict.get("cidade_destino", ""),
@@ -803,6 +843,9 @@ class MotorLogistica:
             self.backlog_futuro.append(
                 {
                     "numero_pedido": pedido_dict.get("numero_pedido", ""),
+                    "id_carga": _cid(pedido_dict),
+                    "id_item": pedido_dict.get("id_item", ""),
+                    "of_ano": pedido_dict.get("of_ano", ""),
                     "cliente": pedido_dict.get("cliente", ""),
                     "cliente_codigo": pedido_dict.get("cliente_codigo", ""),
                     "representante": pedido_dict.get("representante", ""),
@@ -822,6 +865,9 @@ class MotorLogistica:
             self.backlog_local.append(
                 {
                     "numero_pedido": pedido_dict.get("numero_pedido", ""),
+                    "id_carga": _cid(pedido_dict),
+                    "id_item": pedido_dict.get("id_item", ""),
+                    "of_ano": pedido_dict.get("of_ano", ""),
                     "cliente": pedido_dict.get("cliente", ""),
                     "cliente_codigo": pedido_dict.get("cliente_codigo", ""),
                     "representante": pedido_dict.get("representante", ""),
@@ -841,6 +887,9 @@ class MotorLogistica:
             self.coletas.append(
                 {
                     "numero_pedido": pedido_dict.get("numero_pedido", ""),
+                    "id_carga": _cid(pedido_dict),
+                    "id_item": pedido_dict.get("id_item", ""),
+                    "of_ano": pedido_dict.get("of_ano", ""),
                     "cliente": pedido_dict.get("cliente", ""),
                     "representante": pedido_dict.get("representante", ""),
                     "cidade_destino": pedido_dict.get("cidade_destino", ""),
@@ -935,7 +984,7 @@ class MotorLogistica:
         """Remove do backlog futuro e aloca em veículo compatível ou fila de hoje."""
         pedido_dict: dict[str, Any] | None = None
         for i, b in enumerate(self.backlog_futuro):
-            if b.get("numero_pedido") == numero_pedido:
+            if _mesma_carga(b, numero_pedido):
                 pedido_dict = self._backlog_para_pedido(b)
                 self.backlog_futuro.pop(i)
                 break
@@ -974,6 +1023,9 @@ class MotorLogistica:
         self.backlog.append(
             {
                 "numero_pedido": pedido_dict.get("numero_pedido", ""),
+                "id_carga": _cid(pedido_dict),
+                "id_item": pedido_dict.get("id_item", ""),
+                "of_ano": pedido_dict.get("of_ano", ""),
                 "cliente": pedido_dict.get("cliente", ""),
                 "representante": pedido_dict.get("representante", ""),
                 "cidade_destino": pedido_dict.get("cidade_destino", ""),
@@ -994,6 +1046,9 @@ class MotorLogistica:
             peso = 0.0
         return {
             "numero_pedido": entry.get("numero_pedido", ""),
+            "id_carga": _cid(entry),
+            "id_item": entry.get("id_item", ""),
+            "of_ano": entry.get("of_ano", ""),
             "cliente": entry.get("cliente", ""),
             "cliente_codigo": entry.get("cliente_codigo", ""),
             "representante": entry.get("representante", ""),

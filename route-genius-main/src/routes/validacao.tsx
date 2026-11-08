@@ -84,7 +84,7 @@ function ValidacaoPage() {
       const regrasNovas: Record<string, string> = {};
       const memoriaNovas: Record<string, string> = {};
       for (const row of data.consolidados) {
-        const key = row.numero_pedido_norm || row.numero_pedido;
+        const key = row.id_item || row.numero_pedido_norm || row.numero_pedido;
         if (!salvarRegras[key]) continue;
 
         const draft = drafts[key] ?? row;
@@ -111,7 +111,7 @@ function ValidacaoPage() {
     setDrafts((prev) => {
       const base =
         prev[pedidoKey] ??
-        data?.consolidados.find((c) => (c.numero_pedido_norm || c.numero_pedido) === pedidoKey);
+        data?.consolidados.find((c) => (c.id_item || c.numero_pedido_norm || c.numero_pedido) === pedidoKey);
       if (!base) return prev;
       return { ...prev, [pedidoKey]: { ...base, ...patch } };
     });
@@ -243,7 +243,7 @@ function ValidacaoPage() {
             </thead>
             <tbody>
               {data.consolidados.map((row) => {
-                const pedidoKey = row.numero_pedido_norm || row.numero_pedido;
+                const pedidoKey = row.id_item || row.numero_pedido_norm || row.numero_pedido;
                 return (
                   <EditableRow
                     key={pedidoKey}
@@ -319,7 +319,15 @@ function EditableRow({
     >
       <td className="px-4 py-2 font-mono text-xs">
         <div className="flex items-center gap-1.5">
-          <span>{row.numero_pedido}</span>
+          <span>
+            {row.numero_pedido}
+            {row.of_ano && <span className="block text-[10px] text-muted-foreground">OF {row.of_ano}</span>}
+            {row.ja_programado_info && (
+              <span className="block text-[10px] text-amber-600" title={row.ja_programado_info}>
+                {row.ja_programado_info}
+              </span>
+            )}
+          </span>
           {processandoIa && (
             <Tooltip>
               <TooltipTrigger asChild>
