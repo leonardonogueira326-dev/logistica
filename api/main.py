@@ -62,3 +62,25 @@ def ia_status() -> dict:
 @app.get("/api/health", response_model=HealthSchema, tags=["health"])
 def health() -> HealthSchema:
     return HealthSchema()
+
+
+# --------------------------------------------------------------- modo servidor
+# Se o frontend foi compilado (npm run build), o próprio FastAPI serve as telas:
+# um processo, uma porta (http://SERVIDOR:8000), sem Node rodando em produção.
+_FRONT = PROJECT_ROOT / "route-genius-main" / "dist" / "client"
+_SHELL = _FRONT / "_shell.html"
+if _SHELL.exists():
+    from fastapi import HTTPException as _HTTPException
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/assets", StaticFiles(directory=_FRONT / "assets"), name="assets")
+
+    @app.get("/{caminho:path}", include_in_schema=False)
+    def _spa(caminho: str):
+        if caminho.startswith("api/"):
+            raise _HTTPException(status_code=404)
+        arquivo = (_FRONT / caminho).resolve()
+        if caminho and arquivo.is_file() and _FRONT.resolve() in arquivo.parents:
+            return FileResponse(arquivo)
+        return FileResponse(_SHELL)

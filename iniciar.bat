@@ -9,9 +9,11 @@ if not exist .venv\Scripts\python.exe (
 rem IA local: troque o modelo aqui se quiser testar outro (ex.: qwen2.5:7b)
 set LOGISTICA_OLLAMA_MODEL=qwen2.5:3b
 
-start "Logistica - API (nao feche)" cmd /k ".venv\Scripts\python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000"
-start "Logistica - Tela (nao feche)" cmd /k "cd route-genius-main && npm run dev -- --port 5173"
+echo Preparando as telas (leva alguns segundos)...
+pushd route-genius-main
+call npm run build >nul 2>&1 || (popd & echo [ERRO] Falha ao compilar as telas. Rode instalar.bat. & pause & exit /b 1)
+popd
 
-echo Iniciando... o navegador abre em alguns segundos.
-timeout /t 8 /nobreak >nul
-start "" http://localhost:5173
+echo Sistema em http://localhost:8000  (feche esta janela para desligar)
+start "" http://localhost:8000
+.venv\Scripts\python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000
