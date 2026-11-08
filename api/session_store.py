@@ -92,6 +92,37 @@ class SessionStore:
             self._write_json(session_id, "meta.json", meta)
             return meta
 
+    def listar_quadros(self, limite: int = 30) -> list[dict[str, Any]]:
+        """
+        Quadros do dia guardados no servidor (qualquer PC abre o mesmo quadro).
+        Só sessões com lista lida; mais recentes primeiro.
+        """
+        quadros = []
+        for pasta in self.base_dir.iterdir():
+            ingest = pasta / "ingestao.json"
+            if not pasta.is_dir() or not ingest.exists():
+                continue
+            try:
+                meta = json.loads((pasta / "meta.json").read_text(encoding="utf-8"))
+                dados = json.loads(ingest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            consolidados = dados.get("consolidados", [])
+            rote = pasta / "roteirizacao.json"
+            atualizado = max(p.stat().st_mtime for p in pasta.iterdir() if p.is_file())
+            quadros.append({
+                "session_id": pasta.name,
+                "data_referencia": next((c.get("data_referencia") for c in consolidados if c.get("data_referencia")), ""),
+                "solicitacoes": sorted({c.get("numero_solicitacao") for c in consolidados if c.get("numero_solicitacao")}),
+                "linhas": len(consolidados),
+                "conferido": bool(meta.get("validated")),
+                "quadro_montado": rote.exists(),
+                "criado_em": meta.get("created_at", ""),
+                "atualizado_em": datetime.fromtimestamp(atualizado, timezone.utc).isoformat(),
+            })
+        quadros.sort(key=lambda q: q["atualizado_em"], reverse=True)
+        return quadros[:limite]
+
     def is_validated(self, session_id: str) -> bool:
         try:
             return bool(self.get_meta(session_id).get("validated", False))

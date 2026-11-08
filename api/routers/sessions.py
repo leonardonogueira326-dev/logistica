@@ -238,6 +238,12 @@ def _patch_consolidado_session(session_id: str, numero_pedido: str, patch: dict[
     return True
 
 
+@router.get("", tags=["sessions"])
+def listar_quadros(limite: int = 30) -> list[dict[str, Any]]:
+    """Quadros do dia salvos no servidor (para abrir de qualquer PC)."""
+    return store.listar_quadros(limite)
+
+
 @router.post("/upload", response_model=UploadResponseSchema)
 async def upload_session(
     pdf: Optional[UploadFile] = File(None),

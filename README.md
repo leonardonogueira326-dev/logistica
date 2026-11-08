@@ -8,7 +8,6 @@ Sistema de ingestão, quarentena (validação), roteirização e exportação de
 |--------|------------|
 | Backend | Python 3.10+, FastAPI, pdfplumber, openpyxl |
 | Frontend | React, TanStack Router/Query, Vite, shadcn/ui |
-| Alternativo | Streamlit (`app_streamlit.py`) |
 
 ## Estrutura
 
@@ -30,7 +29,8 @@ logistica/
 Pré-requisitos (uma vez só): [Python 3.10+](https://www.python.org/downloads/) (marque *Add python.exe to PATH*), [Node.js 20+](https://nodejs.org/) e, opcional para a IA, [Ollama](https://ollama.com).
 
 1. **Instalar:** dois cliques em `instalar.bat` (cria o `.venv`, instala as dependências e baixa o modelo de IA).
-2. **Usar:** dois cliques em `iniciar.bat`. Abrem duas janelas (API e Tela) — não feche — e o navegador em http://localhost:5173.
+2. **Usar:** dois cliques em `iniciar.bat`. Abre http://localhost:8000 (uma janela só — feche para desligar).
+   - **Servidor da empresa:** `iniciar_servidor.bat` — os outros PCs abrem `http://IP-DO-SERVIDOR:8000`. Os quadros do dia ficam no servidor: qualquer PC escolhe o quadro no topo da tela.
 3. **Testar:** `rodar_testes.bat`. Para incluir os PDFs reais nos testes, copie-os para `dados_teste\`.
 
 Arquivos que ficam só no PC (o `.gitignore` bloqueia — são dados da empresa):
