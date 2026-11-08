@@ -74,6 +74,8 @@ class MotorLogistica:
         self.coletas: list[dict[str, str]] = []
         self.itens_retorno_por_veiculo: dict[str, list[ItemRota]] = {}
         self.viagens_retorno_habilitadas: list[str] = []
+        # Caminhões que o operador fechou: a sugestão automática não mexe neles.
+        self.veiculos_fechados: list[str] = []
         self._cache_mapa_corredor: dict[str, int] = {}
 
     @staticmethod
@@ -367,6 +369,205 @@ class MotorLogistica:
         }
         self._calcular_oportunidades()
         return self.rotas, self.backlog
+
+    # ------------------------------------------------------------------ quadro do dia
+    MOTIVO_NOVA_LINHA = "NOVA LINHA — aguardando alocação"
+    MOTIVOS_DO_SISTEMA = (config.COD_FROTA_INSUFICIENTE, MOTIVO_NOVA_LINHA)
+
+    def _ids_item_no_quadro(self) -> set[str]:
+        """
+        Linhas que o operador já posicionou e a sugestão NÃO deve mexer: nos
+        caminhões, entregas locais, coletas e na Fila de Espera quando quem pôs
+        lá foi o operador (motivo dele, não "frota insuficiente").
+        """
+        ids: set[str] = set()
+        for itens in list(self.itens_por_veiculo.values()) + list(self.itens_retorno_por_veiculo.values()):
+            ids.update(self._id_item_de(i) for i in itens)
+        for lista in (self.backlog_local, self.coletas):
+            ids.update(self._id_item_de(b) for b in lista)
+        for b in self.backlog:
+            if b.get("motivo") not in self.MOTIVOS_DO_SISTEMA:
+                ids.add(self._id_item_de(b))
+        return ids
+
+    def fechar_veiculo(self, veiculo_id: str, fechado: bool = True) -> tuple[bool, str]:
+        nome = next((r.veiculo_nome for r in self.rotas if r.veiculo_id == veiculo_id), veiculo_id)
+        if sum(1 for r in self.rotas if r.veiculo_nome == nome) > 1:
+            nome = f"{nome} ({veiculo_id})"
+        if fechado and veiculo_id not in self.veiculos_fechados:
+            self.veiculos_fechados.append(veiculo_id)
+        if not fechado and veiculo_id in self.veiculos_fechados:
+            self.veiculos_fechados.remove(veiculo_id)
+        return True, f"{nome} {'fechado: a sugestão automática não mexe mais nele' if fechado else 'reaberto'}."
+
+    def sugerir_alocacao(
+        self, consolidados: list[PedidoConsolidado], ativar_reserva: bool = False
+    ) -> tuple[int, int]:
+        """
+        Sugestão INCREMENTAL: distribui só o que ainda não tem lugar (linhas
+        novas, fila por frota insuficiente, pendências resolvidas), sem tirar
+        nada do que o operador montou e sem tocar em caminhões fechados.
+        Retorna (linhas alocadas agora, linhas que ficaram na fila).
+        """
+        self.params = carregar_parametros()
+        self._cache_mapa_corredor = {}
+
+        # Estado "ideal" das linhas: rota / pendência / entrega local.
+        base = MotorLogistica(self.params)
+        base._cache_mapa_corredor = {}
+        roteaveis = base.carregar_pedidos(consolidados)
+        no_quadro = self._ids_item_no_quadro()
+
+        # Pendências: entram as novas, saem as resolvidas (atualiza o motivo).
+        pend_atuais = {self._id_item_de(b): b for b in base.backlog_futuro}
+        self.backlog_futuro = [
+            pend_atuais.get(self._id_item_de(b), b)
+            for b in self.backlog_futuro
+            if (self._id_item_de(b) in pend_atuais or b.get("tipo_backlog") != config.COD_BACKLOG_FUTURO)
+            and self._id_item_de(b) not in no_quadro  # operador já pôs num caminhão: respeita
+        ]
+        ja_futuro = {self._id_item_de(b) for b in self.backlog_futuro}
+        for id_item, b in pend_atuais.items():
+            if id_item not in ja_futuro and id_item not in no_quadro:
+                self.backlog_futuro.append(b)
+        locais = {self._id_item_de(b) for b in self.backlog_local}
+        for b in base.backlog_local:
+            if self._id_item_de(b) not in locais and self._id_item_de(b) not in no_quadro:
+                self.backlog_local.append(b)
+
+        # Candidatas: roteáveis que ainda não têm lugar no quadro.
+        veiculos_ordem = self._ordem_veiculos(ativar_reserva)
+        candidatas = [
+            p for p in self._dividir_excedentes(roteaveis, veiculos_ordem)
+            if self._id_item_de(p) not in no_quadro
+        ]
+        ids_candidatas = {self._id_item_de(p) for p in candidatas}
+        self.backlog = [b for b in self.backlog if self._id_item_de(b) not in ids_candidatas]
+
+        clusters = self._agrupar_por_rota(candidatas)
+        alocados: set[str] = set()
+        for vid, vinfo in veiculos_ordem:
+            if vid in self.veiculos_fechados:
+                continue
+            atuais = self._itens_veiculo_como_dicts(vid)
+            estado = EstadoVeiculo(
+                veiculo_id=vid,
+                veiculo_nome=vinfo.get("nome", vid),
+                veiculo_tipo=vinfo.get("tipo", "BAU"),
+                capacidade_kg=float(vinfo.get("capacidade_peso", 0)),
+                itens=list(atuais),
+                peso_alocado=sum(_float(i.get("peso_kg")) for i in atuais),
+            )
+            rota_existente = next((r for r in self.rotas if r.veiculo_id == vid), None)
+            if atuais and rota_existente and rota_existente.rota_vocacao:
+                estado.rota_vocacao = rota_existente.rota_vocacao
+            else:
+                ancora = self._escolher_ancora(clusters, estado, alocados)
+                if not ancora:
+                    continue
+                self._alocar_item(estado, ancora)
+                alocados.add(_cid(ancora))
+                estado.rota_vocacao = ancora["rota_logistica"]
+            for pedido in self._fila_priorizada(estado, clusters, alocados):
+                if self.pode_alocar(pedido, estado)[0]:
+                    self._alocar_item(estado, pedido)
+                    alocados.add(_cid(pedido))
+
+            novos = [i for i in estado.itens[len(atuais):]]
+            if not novos:
+                continue
+            itens = self.itens_por_veiculo.setdefault(vid, [])
+            itens.extend(self._dict_para_item(i, len(itens) + n) for n, i in enumerate(novos, 1))
+            if not rota_existente:
+                estado.regiao_predominante = rotulo_rota(estado.rota_vocacao)
+                self.rotas.append(self._estado_para_rota(estado))
+            self.recalcular_metricas(vid)
+
+        sobras = [p for p in candidatas if _cid(p) not in alocados]
+        for p in sobras:
+            self.backlog.append(
+                {
+                    "numero_pedido": p["numero_pedido"],
+                    "id_carga": _cid(p),
+                    "id_item": p.get("id_item", ""),
+                    "of_ano": p.get("of_ano", ""),
+                    "parte": str(p.get("parte", "")),
+                    "divisao_automatica": str(p.get("divisao_automatica", "") or ""),
+                    "peso_total_linha": str(p.get("peso_total_linha", "") or ""),
+                    "cliente": p["cliente"],
+                    "cliente_codigo": p.get("cliente_codigo", ""),
+                    "representante": p.get("representante", ""),
+                    "cidade_destino": p.get("cidade_destino", ""),
+                    "rota_logistica": p.get("rota_logistica", ""),
+                    "peso_kg": str(p["peso_kg"]),
+                    "motivo": config.COD_FROTA_INSUFICIENTE,
+                }
+            )
+        self._calcular_oportunidades()
+        return len(alocados), len(sobras)
+
+    def incluir_linhas_novas(self, consolidados_novos: list[PedidoConsolidado]) -> int:
+        """
+        Uma lista nova chegou no mesmo dia (ex.: a de solda/cerca/esponja, ou um
+        adicional). As linhas entram no quadro SEM mexer no que já está montado:
+        pendências em "Parados", entregas locais na fila local e o resto na Fila
+        de Espera como "nova linha". O operador arrasta ou usa "Sugerir alocação".
+        """
+        base = MotorLogistica(self.params)
+        base._cache_mapa_corredor = {}
+        roteaveis = base.carregar_pedidos(consolidados_novos)
+        self.backlog_futuro.extend(base.backlog_futuro)
+        self.backlog_local.extend(base.backlog_local)
+        partes = self._dividir_excedentes(roteaveis, self._ordem_veiculos(False))
+        for p in partes:
+            self.backlog.append(
+                {
+                    "numero_pedido": p["numero_pedido"],
+                    "id_carga": _cid(p),
+                    "id_item": p.get("id_item", ""),
+                    "of_ano": p.get("of_ano", ""),
+                    "parte": str(p.get("parte", "")),
+                    "divisao_automatica": str(p.get("divisao_automatica", "") or ""),
+                    "peso_total_linha": str(p.get("peso_total_linha", "") or ""),
+                    "cliente": p["cliente"],
+                    "cliente_codigo": p.get("cliente_codigo", ""),
+                    "representante": p.get("representante", ""),
+                    "cidade_destino": p.get("cidade_destino", ""),
+                    "rota_logistica": p.get("rota_logistica", ""),
+                    "peso_kg": str(p["peso_kg"]),
+                    "motivo": self.MOTIVO_NOVA_LINHA,
+                }
+            )
+        return len(base.backlog_futuro) + len(base.backlog_local) + len(partes)
+
+    def tirar_do_caminhao_por_pendencia(self, id_item: str, motivo: str) -> str:
+        """
+        A linha voltou a ter pendência (ex.: desfez a liberação): sai do caminhão
+        e vai para "Parados" com o motivo. Retorna o nome do caminhão ou "".
+        """
+        nomes = {r.veiculo_id: r.veiculo_nome for r in self.rotas}
+        saiu_de = ""
+        for vid in list(self.itens_por_veiculo.keys()):
+            ficam = []
+            for item in self.itens_por_veiculo[vid]:
+                if self._id_item_de(item) == id_item:
+                    d = asdict(item)
+                    self.backlog_futuro.append(
+                        {
+                            **{k: str(v) for k, v in self._backlog_para_pedido(
+                                {k2: str(v2) for k2, v2 in d.items()}
+                            ).items()},
+                            "motivo": motivo,
+                            "tipo_backlog": config.COD_BACKLOG_FUTURO,
+                        }
+                    )
+                    saiu_de = nomes.get(vid, vid)
+                else:
+                    ficam.append(item)
+            if len(ficam) != len(self.itens_por_veiculo[vid]):
+                self.itens_por_veiculo[vid] = ficam
+                self.recalcular_metricas(vid)
+        return saiu_de
 
     def _dividir_excedentes(
         self,
@@ -946,6 +1147,7 @@ class MotorLogistica:
                 for vid, itens in self.itens_retorno_por_veiculo.items()
             },
             "viagens_retorno_habilitadas": list(self.viagens_retorno_habilitadas),
+            "veiculos_fechados": list(self.veiculos_fechados),
             "metricas_retorno": metricas_retorno,
         }
 
@@ -1329,6 +1531,8 @@ class MotorLogistica:
 
         melhor_vid = ""
         for rota in self.rotas:
+            if rota.veiculo_id in self.veiculos_fechados:
+                continue
             vocacao = rota.rota_vocacao
             if not vocacao:
                 continue
@@ -1341,6 +1545,8 @@ class MotorLogistica:
 
         if not melhor_vid:
             for rota in self.rotas:
+                if rota.veiculo_id in self.veiculos_fechados:
+                    continue
                 ok, _ = self._validar_movimento_veiculo(pedido_dict, rota.veiculo_id)
                 if ok:
                     melhor_vid = rota.veiculo_id

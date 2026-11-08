@@ -103,16 +103,22 @@ class ResumoIngestaoSchema(BaseModel):
 
 class IngestaoResponseSchema(BaseModel):
     session_id: str
+    linhas_novas: int = 0
     resumo: ResumoIngestaoSchema
     consolidados: list[PedidoConsolidadoSchema]
     avisos: list[str] = Field(default_factory=list)
     erros: list[str] = Field(default_factory=list)
 
 
+class FecharVeiculoSchema(BaseModel):
+    fechado: bool = True
+
+
 class UploadResponseSchema(BaseModel):
     session_id: str
     files_saved: list[str]
     warnings: list[str] = Field(default_factory=list)
+    adicionado_ao_quadro: bool = False
 
 
 class ConsolidadosListSchema(BaseModel):
@@ -188,6 +194,8 @@ class RoteirizacaoSchema(BaseModel):
     coletas: list[dict[str, str]] = Field(default_factory=list)
     itens_retorno_por_veiculo: dict[str, list[ItemRotaSchema]] = Field(default_factory=dict)
     viagens_retorno_habilitadas: list[str] = Field(default_factory=list)
+    veiculos_fechados: list[str] = Field(default_factory=list)
+    mensagem: str = ""
     metricas_retorno: dict[str, dict[str, str | float]] = Field(default_factory=dict)
     jornada_maxima_minutos: int = 600
 
