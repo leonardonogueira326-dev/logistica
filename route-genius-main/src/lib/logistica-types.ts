@@ -12,10 +12,18 @@ export interface PedidoConsolidado {
   representante_codigo?: string;
   data_referencia?: string;
   dias_uteis_antecedencia?: number;
-  /** "", PENDENTE, LIBERADO, NAO_LIBERADO */
+  /** "", LIBERADO, NAO_LIBERADO (se está pendente vem em `pendencias`) */
   consulta_representante?: string;
   consulta_obs?: string;
   consulta_em?: string;
+  /** "AGUARDANDO" = pagamento antecipado esperando o comercial liberar */
+  liberacao_comercial?: string;
+  liberacao_comercial_por?: string;
+  liberacao_comercial_em?: string;
+  liberacao_comercial_obs?: string;
+  /** Calculado pela API: CONSULTA_REPRESENTANTE, PAGAMENTO_ANTECIPADO, PESO_ZERADO */
+  pendencias?: Pendencia[];
+  motivo_parado?: string;
   cliente: string;
   cliente_codigo: string;
   peso_kg: number;
@@ -230,7 +238,16 @@ export interface DividirCargaRequest {
   peso_kg: number;
 }
 
+export type Pendencia = "CONSULTA_REPRESENTANTE" | "PAGAMENTO_ANTECIPADO" | "PESO_ZERADO";
+
 export type ResultadoConsulta = "LIBERADO" | "NAO_LIBERADO" | "PENDENTE";
+
+export interface LiberacaoComercialRequest {
+  ids: string[];
+  resultado: "LIBERADO" | "AGUARDANDO";
+  liberado_por?: string;
+  obs?: string;
+}
 
 export interface ConsultaRepresentanteRequest {
   ids: string[];

@@ -6,6 +6,8 @@ import {
   anteciparPedido,
   operarDivisao,
   registrarConsultaRepresentante,
+  registrarLiberacaoComercial,
+  informarPeso,
   getConsolidados,
   getRoteirizacao,
   ingestSession,
@@ -15,7 +17,7 @@ import {
   roteirizar,
   uploadSession,
 } from "@/lib/api-client";
-import type { AnteciparPedidoBody, ConsolidadoPatch, ConsultaRepresentanteRequest, OperacaoDivisao, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
+import type { AnteciparPedidoBody, ConsolidadoPatch, ConsultaRepresentanteRequest, LiberacaoComercialRequest, OperacaoDivisao, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
 import { COLUMN_BACKLOG } from "@/lib/logistica-types";
 import { optimisticMoveRoteirizacao } from "@/lib/optimistic-move";
 import { SESSION_KEY } from "@/lib/logistica-types";
@@ -121,6 +123,24 @@ export function useLogisticaSession(sessionId: string | null) {
     },
   });
 
+  const comercialMutation = useMutation({
+    mutationFn: ({ sid, body }: { sid: string; body: LiberacaoComercialRequest }) =>
+      registrarLiberacaoComercial(sid, body),
+    onSuccess: (_data, { sid }) => {
+      queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
+      queryClient.invalidateQueries({ queryKey: ["roteirizacao", sid] });
+    },
+  });
+
+  const pesoMutation = useMutation({
+    mutationFn: ({ sid, body }: { sid: string; body: { id: string; peso_kg: number } }) =>
+      informarPeso(sid, body),
+    onSuccess: (_data, { sid }) => {
+      queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
+      queryClient.invalidateQueries({ queryKey: ["roteirizacao", sid] });
+    },
+  });
+
   const dividirMutation = useMutation({
     mutationFn: ({ sid, operacao }: { sid: string; operacao: OperacaoDivisao }) =>
       operarDivisao(sid, operacao),
@@ -177,6 +197,8 @@ export function useLogisticaSession(sessionId: string | null) {
     anteciparMutation,
     dividirMutation,
     consultaMutation,
+    comercialMutation,
+    pesoMutation,
     segundaViagemMutation,
     patchConsolidadoDebounced,
   };

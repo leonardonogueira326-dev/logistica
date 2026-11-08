@@ -3,6 +3,7 @@ import type {
   DividirCargaRequest,
   OperacaoDivisao,
   ConsultaRepresentanteRequest,
+  LiberacaoComercialRequest,
   ConsultaRepresentanteResponse,
   AnteciparPedidoResponse,
   ConfigResponse,
@@ -200,6 +201,30 @@ export async function saveSetup(config: ConfiguracaoOperacional): Promise<SetupR
 export async function buscarHistorico(q: string, limite = 20): Promise<HistoricoResponse> {
   const params = new URLSearchParams({ q, limite: String(limite) });
   return request<HistoricoResponse>(`/historico?${params}`);
+}
+
+/** Pagamento antecipado: comercial liberou por e-mail. */
+export async function registrarLiberacaoComercial(
+  sessionId: string,
+  body: LiberacaoComercialRequest,
+): Promise<ConsultaRepresentanteResponse> {
+  return request<ConsultaRepresentanteResponse>(`/sessions/${sessionId}/liberacao-comercial`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Item veio com peso zerado: logística informa o peso. */
+export async function informarPeso(
+  sessionId: string,
+  body: { id: string; peso_kg: number },
+): Promise<ConsultaRepresentanteResponse> {
+  return request<ConsultaRepresentanteResponse>(`/sessions/${sessionId}/informar-peso`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 /** Resposta do representante: pode carregar hoje? */
