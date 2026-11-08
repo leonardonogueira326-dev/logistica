@@ -105,12 +105,53 @@ export async function exportarRomaneio(sessionId: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+export async function exportarRomaneioCaminhao(
+  sessionId: string,
+  caminhaoId: string,
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/sessions/${sessionId}/caminhao/${encodeURIComponent(caminhaoId)}/exportar`,
+  );
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail ?? JSON.stringify(body);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="?([^";\n]+)"?/i);
+  const hoje = new Date().toISOString().slice(0, 10);
+  const filename =
+    match?.[1] ?? `Romaneio_Caminhao_${caminhaoId}_${hoje}.xlsx`;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function roteirizar(sessionId: string): Promise<Roteirizacao> {
   return request<Roteirizacao>(`/sessions/${sessionId}/roteirizar`, { method: "POST" });
 }
 
 export async function getRoteirizacao(sessionId: string): Promise<Roteirizacao> {
   return request<Roteirizacao>(`/sessions/${sessionId}/roteirizacao`);
+}
+
+export async function habilitarSegundaViagem(
+  sessionId: string,
+  veiculoId: string,
+): Promise<Roteirizacao> {
+  return request<Roteirizacao>(
+    `/sessions/${sessionId}/segunda-viagem/${encodeURIComponent(veiculoId)}`,
+    { method: "POST" },
+  );
 }
 
 export async function moverPedido(

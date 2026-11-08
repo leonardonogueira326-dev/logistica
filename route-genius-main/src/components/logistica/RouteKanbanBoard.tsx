@@ -8,12 +8,18 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Truck, Inbox, PackageSearch, Loader2, AlertTriangle, CalendarClock } from "lucide-react";
+import { Truck, Inbox, PackageSearch, Loader2, AlertTriangle, CalendarClock, Download, MapPin, Clock } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { PedidoAuditSheet } from "@/components/logistica/PedidoAuditSheet";
 import { PedidoKanbanCard, getCardId, type CardPedido } from "@/components/logistica/PedidoKanbanCard";
 import { VehicleMetrics } from "@/components/logistica/VehicleMetrics";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -31,8 +37,11 @@ import {
 import {
   COLUMN_BACKLOG,
   COLUMN_BACKLOG_FUTURO,
+  COLUMN_BACKLOG_LOCAL,
   COLUMN_COLETAS,
   MOTIVOS_BACKLOG,
+  TEO_ALERTA_MIN,
+  idRetornoVeiculo,
   type Roteirizacao,
   type PedidoConsolidado,
 } from "@/lib/logistica-types";
@@ -50,6 +59,10 @@ export function RouteKanbanBoard({
   loading,
   onMove,
   onAntecipar,
+  onExportRomaneio,
+  onHabilitarSegundaViagem,
+  exportingCaminhaoId,
+  habilitandoSegundaViagemId,
   warning,
   consolidadosByPedido = {},
 }: {
@@ -66,6 +79,10 @@ export function RouteKanbanBoard({
     motivo_adiantamento: string;
     representante_autorizou: string;
   }) => Promise<void>;
+  onExportRomaneio?: (caminhaoId: string) => Promise<void>;
+  onHabilitarSegundaViagem?: (veiculoId: string) => Promise<void>;
+  exportingCaminhaoId?: string | null;
+  habilitandoSegundaViagemId?: string | null;
   warning?: string;
   consolidadosByPedido?: Record<string, PedidoConsolidado>;
 }) {
@@ -83,13 +100,39 @@ export function RouteKanbanBoard({
   const jornadaMax = data.jornada_maxima_minutos || 600;
 
   const columns = useMemo(() => {
-    const vehicleCols = data.rotas.map((r) => ({
-      id: r.veiculo_id,
-      label: r.veiculo_nome,
-      rota: r,
-      icon: Truck,
-      variant: "default" as const,
-    }));
+    type ColVariant = "default" | "futuro" | "local" | "retorno";
+    type ColDef = {
+      id: string;
+      label: string;
+      rota: Roteirizacao["rotas"][0] | null;
+      icon: typeof Truck;
+      variant: ColVariant;
+      isRetorno?: boolean;
+      veiculoBaseId?: string;
+    };
+
+    const vehicleCols: ColDef[] = [];
+    for (const r of data.rotas) {
+      vehicleCols.push({
+        id: r.veiculo_id,
+        label: r.veiculo_nome,
+        rota: r,
+        icon: Truck,
+        variant: "default",
+      });
+      if (data.viagens_retorno_habilitadas?.includes(r.veiculo_id)) {
+        vehicleCols.push({
+          id: idRetornoVeiculo(r.veiculo_id),
+          label: `${r.veiculo_nome} - Retorno`,
+          rota: r,
+          icon: Truck,
+          variant: "retorno",
+          isRetorno: true,
+          veiculoBaseId: r.veiculo_id,
+        });
+      }
+    }
+
     return [
       ...vehicleCols,
       {
@@ -99,10 +142,17 @@ export function RouteKanbanBoard({
         icon: CalendarClock,
         variant: "futuro" as const,
       },
+      {
+        id: COLUMN_BACKLOG_LOCAL,
+        label: "Fila de Entregas Locais",
+        rota: null,
+        icon: MapPin,
+        variant: "local" as const,
+      },
       { id: COLUMN_BACKLOG, label: "Fila de Espera", rota: null, icon: Inbox, variant: "default" as const },
       { id: COLUMN_COLETAS, label: "Coletas", rota: null, icon: PackageSearch, variant: "default" as const },
     ];
-  }, [data.rotas]);
+  }, [data.rotas, data.viagens_retorno_habilitadas]);
 
   const destinos = columns.map((c) => ({ id: c.id, label: c.label }));
 
@@ -112,8 +162,14 @@ export function RouteKanbanBoard({
 
     for (const r of data.rotas) {
       map[r.veiculo_id] = [...(data.itens_por_veiculo[r.veiculo_id] ?? [])];
+      if (data.viagens_retorno_habilitadas?.includes(r.veiculo_id)) {
+        map[idRetornoVeiculo(r.veiculo_id)] = [
+          ...(data.itens_retorno_por_veiculo?.[r.veiculo_id] ?? []),
+        ];
+      }
     }
     map[COLUMN_BACKLOG_FUTURO] = [...(data.backlog_futuro ?? [])];
+    map[COLUMN_BACKLOG_LOCAL] = [...(data.backlog_local ?? [])];
     map[COLUMN_BACKLOG] = [...data.backlog];
     map[COLUMN_COLETAS] = [...(data.coletas ?? [])];
     return map;
@@ -254,6 +310,7 @@ export function RouteKanbanBoard({
       )}
 
       <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <TooltipProvider delayDuration={200}>
         <div className="flex gap-4 overflow-x-auto pb-4 min-h-[480px]">
           {columns.map((col) => (
             <KanbanColumn
@@ -271,9 +328,20 @@ export function RouteKanbanBoard({
               }
               onOpenAudit={setAuditPedidoId}
               onAntecipar={col.variant === "futuro" ? setAnteciparModal : undefined}
+              onExportRomaneio={col.rota ? onExportRomaneio : undefined}
+              exportingRomaneio={exportingCaminhaoId === col.id}
+              onHabilitarSegundaViagem={
+                col.rota && !col.isRetorno ? onHabilitarSegundaViagem : undefined
+              }
+              habilitandoSegundaViagem={habilitandoSegundaViagemId === col.id}
+              viagensRetornoHabilitadas={data.viagens_retorno_habilitadas ?? []}
+              metricasRetorno={data.metricas_retorno ?? {}}
+              isRetorno={col.isRetorno}
+              veiculoBaseId={col.veiculoBaseId}
             />
           ))}
         </div>
+        </TooltipProvider>
         <DragOverlay>
           {activeCard ? (
             <div className="w-[280px] opacity-90">
@@ -426,6 +494,14 @@ function KanbanColumn({
   onMoveTo,
   onOpenAudit,
   onAntecipar,
+  onExportRomaneio,
+  exportingRomaneio,
+  onHabilitarSegundaViagem,
+  habilitandoSegundaViagem,
+  viagensRetornoHabilitadas,
+  metricasRetorno,
+  isRetorno,
+  veiculoBaseId,
 }: {
   id: string;
   title: string;
@@ -434,45 +510,150 @@ function KanbanColumn({
   jornadaMax: number;
   items: CardPedido[];
   destinos: { id: string; label: string }[];
-  variant?: "default" | "futuro";
+  variant?: "default" | "futuro" | "local" | "retorno";
   onMoveTo: (destino: string, pedido: CardPedido) => void;
   onOpenAudit: (numeroPedido: string) => void;
   onAntecipar?: (numeroPedido: string) => void;
+  onExportRomaneio?: (caminhaoId: string) => Promise<void>;
+  exportingRomaneio?: boolean;
+  onHabilitarSegundaViagem?: (veiculoId: string) => Promise<void>;
+  habilitandoSegundaViagem?: boolean;
+  viagensRetornoHabilitadas?: string[];
+  metricasRetorno?: Roteirizacao["metricas_retorno"];
+  isRetorno?: boolean;
+  veiculoBaseId?: string;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id, data: { columnId: id } });
+
+  const teoMin = isRetorno && veiculoBaseId
+    ? parseInt(metricasRetorno?.[veiculoBaseId]?.teo_minutos ?? "0", 10)
+    : parseInt(rota?.teo_minutos ?? rota?.tempo_total_min ?? "0", 10);
+  const teoLabel = isRetorno && veiculoBaseId
+    ? metricasRetorno?.[veiculoBaseId]?.teo_hhmm ?? formatTeoMin(teoMin)
+    : rota?.teo_hhmm || formatTeoMin(teoMin);
+
+  const mostrarSegundaViagem =
+    rota &&
+    !isRetorno &&
+    rota.segunda_viagem_elegivel &&
+    !viagensRetornoHabilitadas?.includes(rota.veiculo_id) &&
+    onHabilitarSegundaViagem;
 
   return (
     <div
       ref={setNodeRef}
       className={cn(
         "flex w-[300px] shrink-0 flex-col rounded-xl border",
-        variant === "futuro"
-          ? "border-muted-foreground/30 bg-muted/15"
-          : "border-border bg-muted/20",
+        variant === "futuro" && "border-muted-foreground/30 bg-muted/15",
+        variant === "local" && "border-emerald-500/30 bg-emerald-500/5",
+        variant === "retorno" && "border-success/40 bg-success/5",
+        variant === "default" && rota?.alerta_elastico && "border-warning/50 bg-warning/5",
+        variant === "default" && !rota?.alerta_elastico && "border-border bg-muted/20",
         isOver && "ring-2 ring-accent bg-accent/5",
       )}
     >
       <div className={cn(
         "px-3 py-3 border-b border-border rounded-t-xl",
         variant === "futuro" ? "bg-muted/50" : "bg-card",
+        variant === "local" && "bg-emerald-500/10",
+        variant === "retorno" && "bg-success/10",
       )}>
         <div className="flex items-center gap-2">
-          <Icon className={cn("w-4 h-4", variant === "futuro" ? "text-muted-foreground" : "text-accent")} />
-          <div className="font-semibold text-sm truncate">{title}</div>
-          <span className="ml-auto text-xs text-muted-foreground">{items.length}</span>
+          <Icon className={cn(
+            "w-4 h-4",
+            variant === "futuro" && "text-muted-foreground",
+            variant === "local" && "text-emerald-600",
+            variant === "retorno" && "text-success",
+            variant === "default" && "text-accent",
+          )} />
+          <div className="font-semibold text-sm truncate flex-1 min-w-0">{title}</div>
+          {rota && (
+            <TeoBadge teoMin={teoMin} teoLabel={teoLabel} />
+          )}
+          {rota && onExportRomaneio && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  disabled={exportingRomaneio}
+                  onClick={() => void onExportRomaneio(id)}
+                  className={cn(
+                    "shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-md border border-border",
+                    "bg-background text-muted-foreground hover:text-foreground hover:bg-muted/60",
+                    "disabled:opacity-50 disabled:pointer-events-none",
+                  )}
+                  aria-label="Exportar Romaneio"
+                >
+                  {exportingRomaneio ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Exportar Romaneio</TooltipContent>
+            </Tooltip>
+          )}
+          <span className="text-xs text-muted-foreground shrink-0">{items.length}</span>
         </div>
         {variant === "futuro" && (
           <div className="mt-1 text-[11px] text-muted-foreground">
             Pedidos com recebimento futuro — visíveis para decisão
           </div>
         )}
-        {rota && (
+        {variant === "local" && (
+          <div className="mt-1 text-[11px] text-muted-foreground">
+            Americana, Santa Bárbara d&apos;Oeste e SBO — 2ª viagem local
+          </div>
+        )}
+        {variant === "retorno" && (
+          <div className="mt-1 text-[11px] text-muted-foreground">
+            Romaneio independente · turno da tarde
+          </div>
+        )}
+        {mostrarSegundaViagem && (
+          <button
+            type="button"
+            disabled={habilitandoSegundaViagem}
+            onClick={() => void onHabilitarSegundaViagem!(rota!.veiculo_id)}
+            className={cn(
+              "mt-2 w-full inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold",
+              "bg-success/15 text-success border border-success/40 hover:bg-success/25",
+              "disabled:opacity-50",
+            )}
+          >
+            {habilitandoSegundaViagem ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              "+ Habilitar 2ª Viagem"
+            )}
+          </button>
+        )}
+        {rota && !isRetorno && (
           <>
             <div className="mt-1 text-[11px] text-muted-foreground">
               {rota.regiao_predominante} · retorno {rota.retorno_previsto}
             </div>
             <VehicleMetrics rota={rota} jornadaMax={jornadaMax} />
+            {rota.alerta_elastico && rota.mensagem_alerta_elastico && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="mt-2 flex items-start gap-1.5 rounded-md border border-warning/50 bg-warning/15 px-2 py-1.5 text-[11px] text-warning-foreground">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-warning" />
+                    <span className="leading-snug">{rota.mensagem_alerta_elastico}</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-[260px]">
+                  {rota.mensagem_alerta_elastico}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </>
+        )}
+        {rota && isRetorno && veiculoBaseId && (
+          <div className="mt-2 text-[10px] text-muted-foreground">
+            Peso: {(metricasRetorno?.[veiculoBaseId]?.peso_alocado_kg ?? 0).toLocaleString("pt-BR")} kg
+          </div>
         )}
       </div>
       <div className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[560px]">
@@ -495,5 +676,29 @@ function KanbanColumn({
         )}
       </div>
     </div>
+  );
+}
+
+function formatTeoMin(min: number) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${h}h${m.toString().padStart(2, "0")}`;
+}
+
+function TeoBadge({ teoMin, teoLabel }: { teoMin: number; teoLabel: string }) {
+  const alerta = teoMin > TEO_ALERTA_MIN;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-0.5 shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold font-mono",
+        alerta
+          ? "bg-destructive/15 text-destructive border border-destructive/40"
+          : "bg-muted text-muted-foreground border border-border",
+      )}
+      title={alerta ? "TEO acima de 8h30 — alerta de jornada" : "Tempo Estimado de Operação"}
+    >
+      <Clock className="w-3 h-3" />
+      {teoLabel}
+    </span>
   );
 }

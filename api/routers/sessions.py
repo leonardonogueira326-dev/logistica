@@ -41,7 +41,12 @@ from motor_logistica import MotorLogistica  # noqa: E402
 import config  # noqa: E402
 from normalizador import normalizar_texto, resolver_rota_logistica  # noqa: E402
 from param_manager import carregar_parametros  # noqa: E402
-from gerador_romaneio import gerar_romaneio_xlsx, nome_arquivo_romaneio  # noqa: E402
+from gerador_romaneio import (  # noqa: E402
+    gerar_romaneio_caminhao_xlsx,
+    gerar_romaneio_xlsx,
+    nome_arquivo_romaneio,
+    nome_arquivo_romaneio_caminhao,
+)
 from historico_manager import arquivar_sessao  # noqa: E402
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -54,7 +59,10 @@ UPLOAD_FIELDS = {
 
 
 def _dict_to_consolidado(data: dict[str, Any]) -> PedidoConsolidado:
-    return PedidoConsolidado(**{k: data.get(k, "") for k in PedidoConsolidado.__dataclass_fields__})
+    fields = PedidoConsolidado.__dataclass_fields__
+    return PedidoConsolidado(
+        **{k: data.get(k, fields[k].default) for k in fields}
+    )
 
 
 def _consolidados_from_ingestao(data: dict[str, Any]) -> list[PedidoConsolidado]:
@@ -79,13 +87,36 @@ def _roteirizacao_from_motor(motor: MotorLogistica, session_id: str) -> Roteiriz
     params = carregar_parametros()
     return RoteirizacaoSchema(
         session_id=session_id,
-        rotas=data["rotas"],
-        itens_por_veiculo=data["itens_por_veiculo"],
-        backlog=data["backlog"],
-        backlog_futuro=data.get("backlog_futuro", []),
-        coletas=data.get("coletas", []),
         jornada_maxima_minutos=int(params.get("jornada_maxima_minutos", 600)),
+        **data,
     )
+
+
+def _motor_from_roteirizacao(data: dict[str, Any]) -> MotorLogistica:
+    motor = MotorLogistica()
+    motor.rotas = [_dict_to_rota(r) for r in data.get("rotas", [])]
+    motor.itens_por_veiculo = {
+        vid: [_dict_to_item(i) for i in itens]
+        for vid, itens in data.get("itens_por_veiculo", {}).items()
+    }
+    motor.backlog = data.get("backlog", [])
+    motor.backlog_futuro = data.get("backlog_futuro", [])
+    motor.backlog_local = data.get("backlog_local", [])
+    motor.coletas = data.get("coletas", [])
+    motor.itens_retorno_por_veiculo = {
+        vid: [_dict_to_item(i) for i in itens]
+        for vid, itens in data.get("itens_retorno_por_veiculo", {}).items()
+    }
+    motor.viagens_retorno_habilitadas = list(data.get("viagens_retorno_habilitadas", []))
+    return motor
+
+
+def _enriquecer_teo_motor(motor: MotorLogistica) -> None:
+    for vid in list(motor.itens_por_veiculo.keys()):
+        motor.recalcular_metricas(vid)
+    for rota in motor.rotas:
+        if rota.veiculo_id not in motor.itens_por_veiculo:
+            motor._aplicar_alertas_rota(rota, [])
 
 
 def _patch_consolidado_session(session_id: str, numero_pedido: str, patch: dict[str, Any]) -> bool:
@@ -266,7 +297,7 @@ def patch_consolidado(
 @router.post("/{session_id}/validacao/confirmar", response_model=ValidacaoConfirmarSchema)
 def confirmar_validacao(
     session_id: str,
-    body: ValidacaoConfirmarBodySchema | None = None,
+    body: Optional[ValidacaoConfirmarBodySchema] = None,
 ) -> ValidacaoConfirmarSchema:
     try:
         ingest = store.load_ingestao(session_id)
@@ -367,12 +398,13 @@ def get_roteirizacao(session_id: str) -> RoteirizacaoSchema:
 
     data.setdefault("coletas", [])
     data.setdefault("backlog_futuro", [])
-    params = carregar_parametros()
-    return RoteirizacaoSchema(
-        session_id=session_id,
-        jornada_maxima_minutos=int(params.get("jornada_maxima_minutos", 600)),
-        **data,
-    )
+    data.setdefault("backlog_local", [])
+    data.setdefault("itens_retorno_por_veiculo", {})
+    data.setdefault("viagens_retorno_habilitadas", [])
+    data.setdefault("metricas_retorno", {})
+    motor = _motor_from_roteirizacao(data)
+    _enriquecer_teo_motor(motor)
+    return _roteirizacao_from_motor(motor, session_id)
 
 
 @router.get("/{session_id}/exportar-romaneio")
@@ -399,21 +431,68 @@ def exportar_romaneio(session_id: str) -> StreamingResponse:
     )
 
 
+@router.get("/{session_id}/caminhao/{caminhao_id}/exportar")
+def exportar_romaneio_caminhao(session_id: str, caminhao_id: str) -> StreamingResponse:
+    try:
+        store.session_path(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada.")
+
+    data = store.load_roteirizacao(session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Roteirização não executada.")
+
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    consolidados_map: dict[str, dict[str, Any]] = {}
+    for c in consolidados:
+        row = asdict(c)
+        consolidados_map[c.numero_pedido] = row
+        if c.numero_pedido_norm:
+            consolidados_map[c.numero_pedido_norm] = row
+
+    try:
+        conteudo = gerar_romaneio_caminhao_xlsx(data, caminhao_id, consolidados_map)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Falha ao gerar romaneio: {exc}") from exc
+
+    filename = nome_arquivo_romaneio_caminhao(caminhao_id)
+    return StreamingResponse(
+        BytesIO(conteudo),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/{session_id}/segunda-viagem/{veiculo_id}", response_model=RoteirizacaoSchema)
+def habilitar_segunda_viagem(session_id: str, veiculo_id: str) -> RoteirizacaoSchema:
+    try:
+        store.session_path(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada.")
+
+    data = store.load_roteirizacao(session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Roteirização não executada.")
+
+    motor = _motor_from_roteirizacao(data)
+    ok, err = motor.habilitar_segunda_viagem(veiculo_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
+
+    payload = motor.para_dict()
+    store.save_roteirizacao(session_id, payload)
+    return _roteirizacao_from_motor(motor, session_id)
+
+
 @router.post("/{session_id}/mover", response_model=MoverPedidoResponseSchema)
 def mover_pedido(session_id: str, body: MoverPedidoSchema) -> MoverPedidoResponseSchema:
     data = store.load_roteirizacao(session_id)
     if not data:
         raise HTTPException(status_code=404, detail="Roteirização não executada.")
 
-    motor = MotorLogistica()
-    motor.rotas = [_dict_to_rota(r) for r in data.get("rotas", [])]
-    motor.itens_por_veiculo = {
-        vid: [_dict_to_item(i) for i in itens]
-        for vid, itens in data.get("itens_por_veiculo", {}).items()
-    }
-    motor.backlog = data.get("backlog", [])
-    motor.backlog_futuro = data.get("backlog_futuro", [])
-    motor.coletas = data.get("coletas", [])
+    motor = _motor_from_roteirizacao(data)
 
     ok, warning = motor.mover_pedido(
         body.numero_pedido,
@@ -481,15 +560,7 @@ def antecipar_pedido(
     if not ok_patch:
         raise HTTPException(status_code=404, detail="Não foi possível atualizar o consolidado.")
 
-    motor = MotorLogistica()
-    motor.rotas = [_dict_to_rota(r) for r in rote_data.get("rotas", [])]
-    motor.itens_por_veiculo = {
-        vid: [_dict_to_item(i) for i in itens]
-        for vid, itens in rote_data.get("itens_por_veiculo", {}).items()
-    }
-    motor.backlog = rote_data.get("backlog", [])
-    motor.backlog_futuro = rote_data.get("backlog_futuro", [])
-    motor.coletas = rote_data.get("coletas", [])
+    motor = _motor_from_roteirizacao(rote_data)
 
     ok, err, destino = motor.antecipar_para_hoje(body.numero_pedido)
     if not ok:

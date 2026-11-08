@@ -1,13 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Download, Info, Loader2, Zap } from "lucide-react";
+import { Download, Info, LayoutGrid, Loader2, Map, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { MapaRoteirizacao } from "@/components/logistica/MapaRoteirizacao";
 import { RouteKanbanBoard } from "@/components/logistica/RouteKanbanBoard";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   getStoredSessionId,
   useLogisticaSession,
 } from "@/hooks/useLogisticaSession";
-import { exportarRomaneio } from "@/lib/api-client";
+import { exportarRomaneio, exportarRomaneioCaminhao } from "@/lib/api-client";
 import type { PedidoConsolidado } from "@/lib/logistica-types";
 import { cn } from "@/lib/utils";
 
@@ -18,10 +20,13 @@ export const Route = createFileRoute("/roteirizar")({
 
 function RoteirizarPage() {
   const sessionId = getStoredSessionId();
-  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, moverMutation, anteciparMutation } =
+  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, moverMutation, anteciparMutation, segundaViagemMutation } =
     useLogisticaSession(sessionId);
   const [lastWarning, setLastWarning] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [exportingCaminhaoId, setExportingCaminhaoId] = useState<string | null>(null);
+  const [habilitandoSegundaViagemId, setHabilitandoSegundaViagemId] = useState<string | null>(null);
+  const [visualizacao, setVisualizacao] = useState<"kanban" | "mapa">("kanban");
 
   const consolidadosByPedido = useMemo(() => {
     const map: Record<string, PedidoConsolidado> = {};
@@ -53,7 +58,8 @@ function RoteirizarPage() {
     roteirizacaoQuery.isLoading ||
     roteirizarMutation.isPending ||
     moverMutation.isPending ||
-    anteciparMutation.isPending;
+    anteciparMutation.isPending ||
+    segundaViagemMutation.isPending;
 
   const data = roteirizacaoQuery.data ?? roteirizarMutation.data;
 
@@ -74,6 +80,26 @@ function RoteirizarPage() {
       await exportarRomaneio(sessionId);
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleExportRomaneioCaminhao = async (caminhaoId: string) => {
+    if (!sessionId) return;
+    setExportingCaminhaoId(caminhaoId);
+    try {
+      await exportarRomaneioCaminhao(sessionId, caminhaoId);
+    } finally {
+      setExportingCaminhaoId(null);
+    }
+  };
+
+  const handleHabilitarSegundaViagem = async (veiculoId: string) => {
+    if (!sessionId) return;
+    setHabilitandoSegundaViagemId(veiculoId);
+    try {
+      await segundaViagemMutation.mutateAsync({ sid: sessionId, veiculoId });
+    } finally {
+      setHabilitandoSegundaViagemId(null);
     }
   };
 
@@ -136,14 +162,41 @@ function RoteirizarPage() {
       )}
 
       {data && (
-        <RouteKanbanBoard
-          data={data}
-          loading={moverMutation.isPending || anteciparMutation.isPending}
-          onMove={handleMove}
-          onAntecipar={handleAntecipar}
-          warning={lastWarning}
-          consolidadosByPedido={consolidadosByPedido}
-        />
+        <Tabs
+          value={visualizacao}
+          onValueChange={(v) => setVisualizacao(v as "kanban" | "mapa")}
+          className="w-full"
+        >
+          <TabsList>
+            <TabsTrigger value="kanban" className="gap-1.5">
+              <LayoutGrid className="w-4 h-4" />
+              Visualização Kanban
+            </TabsTrigger>
+            <TabsTrigger value="mapa" className="gap-1.5">
+              <Map className="w-4 h-4" />
+              Visualização Mapa
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="kanban" className="mt-4">
+            <RouteKanbanBoard
+              data={data}
+              loading={moverMutation.isPending || anteciparMutation.isPending}
+              onMove={handleMove}
+              onAntecipar={handleAntecipar}
+              onExportRomaneio={handleExportRomaneioCaminhao}
+              exportingCaminhaoId={exportingCaminhaoId}
+              onHabilitarSegundaViagem={handleHabilitarSegundaViagem}
+              habilitandoSegundaViagemId={habilitandoSegundaViagemId}
+              warning={lastWarning}
+              consolidadosByPedido={consolidadosByPedido}
+            />
+          </TabsContent>
+
+          <TabsContent value="mapa" className="mt-4">
+            <MapaRoteirizacao data={data} consolidadosByPedido={consolidadosByPedido} />
+          </TabsContent>
+        </Tabs>
       )}
     </div>
   );

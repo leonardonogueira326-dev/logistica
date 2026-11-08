@@ -10,7 +10,8 @@ export function VehicleMetrics({
   jornadaMax: number;
 }) {
   const pesoPct = pct(rota.capacidade_kg, rota.peso_alocado_kg);
-  const tempoMin = parseInt(rota.tempo_total_min, 10) || 0;
+  const tempoMin = parseInt(rota.teo_minutos, 10) || parseInt(rota.tempo_total_min, 10) || 0;
+  const teoLabel = rota.teo_hhmm || formatMin(tempoMin);
   const jornadaPct = jornadaMax ? Math.min(100, Math.round((tempoMin / jornadaMax) * 100)) : 0;
 
   return (
@@ -20,7 +21,7 @@ export function VehicleMetrics({
         pct={pesoPct}
       />
       <MetricBar
-        label={`Jornada · ${formatMin(tempoMin)} / ${formatMin(jornadaMax)} · ${rota.qtd_paradas} paradas`}
+        label={`TEO · ${teoLabel} / ${formatMin(jornadaMax)} · ${rota.qtd_paradas} paradas`}
         pct={jornadaPct}
       />
     </div>

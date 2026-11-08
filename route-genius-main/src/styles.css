@@ -150,3 +150,14 @@
     color: var(--color-foreground);
   }
 }
+
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+  z-index: 0;
+}
+
+.mapa-rota-marker {
+  background: transparent;
+  border: none;
+}

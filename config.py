@@ -13,6 +13,26 @@ PERMITIR_SPYDER_NO_BAU = True
 PESO_MAX_SPYDER_NO_BAU = 800
 OBS_SPYDER_LEVE_BAU = "SPYDER LEVE - CARREGAR POR ÚLTIMO (PORTA DO BAÚ)"
 
+TEO_TEMPO_DESCARGA_MIN = 30
+TEO_ALERTA_JORNADA_MIN = 510
+TEO_SEGUNDA_VIAGEM_MAX_MIN = 360
+SUFIXO_VIAGEM_RETORNO = "::RETORNO"
+
+CIDADES_ENTREGA_LOCAL = frozenset(
+    {
+        "AMERICANA",
+        "SANTA BARBARA D OESTE",
+        "SANTA BARBARA DO OESTE",
+        "SBO",
+    }
+)
+
+CORREDORES_LOGISTICOS_DEFAULT: dict[str, dict[str, object]] = {
+    "1": {"nome": "Norte/Marginal", "prefixos_cep": ["02", "05"]},
+    "2": {"nome": "Oeste/Rodoanel", "prefixos_cep": ["06", "18"]},
+    "3": {"nome": "Sul/ABC", "prefixos_cep": ["09", "04"]},
+}
+
 COD_BLOQUEIO_FISCAL = "BLOQUEIO FISCAL"
 COD_TRAVADO_COMERCIAL = "TRAVADO COMERCIAL"
 COD_LIMITE_JORNADA = "LIMITE DE JORNADA"
@@ -25,6 +45,7 @@ COD_SUPERFINE_TRANSP = "1"
 COD_REVISAO_OBRIGATORIA = "REVISAO_OBRIGATORIA"
 COD_PROCESSANDO_IA = "PROCESSANDO_IA"
 COD_BACKLOG_FUTURO = "BACKLOG_FUTURO"
+COD_BACKLOG_LOCAL = "BACKLOG_LOCAL"
 STATUS_IA_NAO_APLICAVEL = "NAO_APLICAVEL"
 STATUS_IA_CONCLUIDO = "CONCLUIDO"
 STATUS_IA_ERRO = "ERRO_IA"
@@ -110,6 +131,21 @@ VEICULOS = {
 
 ARQUIVO_CADASTRO_CSV = "TESTE.xlsx - Planilha1.csv"
 ARQUIVO_CADASTRO_XLSX = "TESTE.xlsx"
+
+NOMINATIM_USER_AGENT = "SuperfineLogisticsApp/1.0"
+NOMINATIM_INTERVALO_SEG = 1.5
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+
+ARQUIVO_BASE_CLIENTES_CSV = "base-de-clientes1.xlsx - Planilha1.csv"
+ARQUIVO_BASE_TRANSPORTADORAS_CSV = "base-transportadoras.xlsx - Dados.csv"
+ARQUIVO_BASE_CLIENTES_XLSX = "base-de-clientes1.xlsx"
+ARQUIVO_BASE_CLIENTES_XLSX_FALLBACKS = (
+    "base-de-clientes1.xlsx",
+    "base-de-clientes.xlsx",
+)
+ARQUIVO_BASE_CLIENTES_SHEETS = ("Planilha1", "Dados")
+ARQUIVO_BASE_TRANSPORTADORAS_XLSX = "base-transportadoras.xlsx"
+ARQUIVO_CADASTRO_GEOLOCALIZADO = "data/cadastro_mestre_geolocalizado.json"
 
 ROTULOS_ROTA = {
     "ROTA_CAPITAL": "CAPITAL",
