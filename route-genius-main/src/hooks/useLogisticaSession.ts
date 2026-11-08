@@ -4,6 +4,7 @@ import { useCallback, useRef } from "react";
 import {
   confirmarValidacao,
   anteciparPedido,
+  dividirCarga,
   getConsolidados,
   getRoteirizacao,
   ingestSession,
@@ -13,7 +14,7 @@ import {
   roteirizar,
   uploadSession,
 } from "@/lib/api-client";
-import type { AnteciparPedidoBody, ConsolidadoPatch, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
+import type { AnteciparPedidoBody, ConsolidadoPatch, DividirCargaRequest, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
 import { COLUMN_BACKLOG } from "@/lib/logistica-types";
 import { optimisticMoveRoteirizacao } from "@/lib/optimistic-move";
 import { SESSION_KEY } from "@/lib/logistica-types";
@@ -110,6 +111,14 @@ export function useLogisticaSession(sessionId: string | null) {
     },
   });
 
+  const dividirMutation = useMutation({
+    mutationFn: ({ sid, body }: { sid: string; body: DividirCargaRequest }) =>
+      dividirCarga(sid, body),
+    onSuccess: (data, { sid }) => {
+      queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
+    },
+  });
+
   const anteciparMutation = useMutation({
     mutationFn: ({ sid, body }: { sid: string; body: AnteciparPedidoBody }) =>
       anteciparPedido(sid, body),
@@ -156,6 +165,7 @@ export function useLogisticaSession(sessionId: string | null) {
     roteirizarMutation,
     moverMutation,
     anteciparMutation,
+    dividirMutation,
     segundaViagemMutation,
     patchConsolidadoDebounced,
   };

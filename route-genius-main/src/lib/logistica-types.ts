@@ -156,6 +156,9 @@ export interface ItemRota {
   id_carga?: string;
   id_item?: string;
   of_ano?: string;
+  /** "1/2", "2/2"... quando a linha foi dividida entre caminhões */
+  parte?: string;
+  peso_total_linha?: number;
   cliente: string;
   cliente_codigo: string;
   representante: string;
@@ -211,6 +214,11 @@ export interface MoverPedidoRequest {
   destino: string;
   motivo?: string;
   forcar?: boolean;
+}
+
+export interface DividirCargaRequest {
+  id_carga: string;
+  peso_kg: number;
 }
 
 export interface MoverPedidoResponse {

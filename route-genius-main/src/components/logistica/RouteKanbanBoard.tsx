@@ -59,6 +59,7 @@ export function RouteKanbanBoard({
   loading,
   onMove,
   onAntecipar,
+  onDividir,
   onExportRomaneio,
   onHabilitarSegundaViagem,
   exportingCaminhaoId,
@@ -79,6 +80,7 @@ export function RouteKanbanBoard({
     motivo_adiantamento: string;
     representante_autorizou: string;
   }) => Promise<void>;
+  onDividir?: (payload: { id_carga: string; peso_kg: number }) => Promise<void>;
   onExportRomaneio?: (caminhaoId: string) => Promise<void>;
   onHabilitarSegundaViagem?: (veiculoId: string) => Promise<void>;
   exportingCaminhaoId?: string | null;
@@ -96,6 +98,40 @@ export function RouteKanbanBoard({
   const [motivoAdiantamento, setMotivoAdiantamento] = useState("");
   const [repAutorizou, setRepAutorizou] = useState("");
   const [antecipando, setAntecipando] = useState(false);
+  const [dividirModal, setDividirModal] = useState<{ id: string; peso: number; titulo: string } | null>(null);
+  const [pesoDividir, setPesoDividir] = useState("");
+  const [erroDividir, setErroDividir] = useState("");
+  const [dividindo, setDividindo] = useState(false);
+
+  const abrirDividir = (pedido: CardPedido) => {
+    const peso = Number(pedido.peso_kg ?? 0);
+    const of = String((pedido as Record<string, string>).of_ano ?? "");
+    setDividirModal({
+      id: getCardId(pedido),
+      peso,
+      titulo: `${String(pedido.cliente ?? "")} — ${String(pedido.numero_pedido ?? "")}${of ? ` OF ${of}` : ""}`,
+    });
+    setPesoDividir(String(Math.round(peso / 2)));
+    setErroDividir("");
+  };
+
+  const confirmarDivisao = async () => {
+    if (!dividirModal || !onDividir) return;
+    const valor = Number(pesoDividir);
+    if (!(valor > 0) || valor >= dividirModal.peso) {
+      setErroDividir(`Informe um peso entre 0 e ${dividirModal.peso.toLocaleString("pt-BR")} kg.`);
+      return;
+    }
+    setDividindo(true);
+    try {
+      await onDividir({ id_carga: dividirModal.id, peso_kg: valor });
+      setDividirModal(null);
+    } catch (e) {
+      setErroDividir(e instanceof Error ? e.message : "Não foi possível dividir.");
+    } finally {
+      setDividindo(false);
+    }
+  };
 
   const jornadaMax = data.jornada_maxima_minutos || 600;
 
@@ -337,6 +373,7 @@ export function RouteKanbanBoard({
               }
               onOpenAudit={setAuditPedidoId}
               onAntecipar={col.variant === "futuro" ? setAnteciparModal : undefined}
+              onDividir={onDividir ? abrirDividir : undefined}
               onExportRomaneio={col.rota ? onExportRomaneio : undefined}
               exportingRomaneio={exportingCaminhaoId === col.id}
               onHabilitarSegundaViagem={
@@ -403,6 +440,63 @@ export function RouteKanbanBoard({
               }
             >
               Confirmar
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!dividirModal} onOpenChange={(o) => !o && setDividirModal(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Dividir carga</DialogTitle>
+          </DialogHeader>
+          {dividirModal && (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">{dividirModal.titulo}</p>
+              <p>
+                Peso desta carga: <b>{dividirModal.peso.toLocaleString("pt-BR")} kg</b>. A nova parte
+                fica na mesma coluna — depois arraste para o outro caminhão.
+              </p>
+              <label className="block">
+                <span className="text-xs text-muted-foreground">Peso da nova parte (kg)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={dividirModal.peso - 1}
+                  autoFocus
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 font-mono"
+                  value={pesoDividir}
+                  onChange={(e) => {
+                    setPesoDividir(e.target.value);
+                    setErroDividir("");
+                  }}
+                  onKeyDown={(e) => e.key === "Enter" && void confirmarDivisao()}
+                />
+              </label>
+              {Number(pesoDividir) > 0 && Number(pesoDividir) < dividirModal.peso && (
+                <p className="text-xs text-muted-foreground">
+                  Fica {(dividirModal.peso - Number(pesoDividir)).toLocaleString("pt-BR")} kg +{" "}
+                  {Number(pesoDividir).toLocaleString("pt-BR")} kg
+                </p>
+              )}
+              {erroDividir && <p className="text-xs text-destructive">{erroDividir}</p>}
+            </div>
+          )}
+          <DialogFooter>
+            <button
+              type="button"
+              className="px-4 py-2 text-sm rounded-md border"
+              onClick={() => setDividirModal(null)}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={dividindo}
+              className="px-4 py-2 text-sm rounded-md bg-accent text-accent-foreground disabled:opacity-50"
+              onClick={() => void confirmarDivisao()}
+            >
+              {dividindo ? "Dividindo…" : "Dividir"}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -503,6 +597,7 @@ function KanbanColumn({
   onMoveTo,
   onOpenAudit,
   onAntecipar,
+  onDividir,
   onExportRomaneio,
   exportingRomaneio,
   onHabilitarSegundaViagem,
@@ -523,6 +618,7 @@ function KanbanColumn({
   onMoveTo: (destino: string, pedido: CardPedido) => void;
   onOpenAudit: (numeroPedido: string) => void;
   onAntecipar?: (numeroPedido: string) => void;
+  onDividir?: (pedido: CardPedido) => void;
   onExportRomaneio?: (caminhaoId: string) => Promise<void>;
   exportingRomaneio?: boolean;
   onHabilitarSegundaViagem?: (veiculoId: string) => Promise<void>;
@@ -676,6 +772,7 @@ function KanbanColumn({
             onMoveTo={(dest) => onMoveTo(dest, pedido)}
             onOpenAudit={onOpenAudit}
             onAntecipar={onAntecipar}
+            onDividir={onDividir ? () => onDividir(pedido) : undefined}
           />
         ))}
         {items.length === 0 && (

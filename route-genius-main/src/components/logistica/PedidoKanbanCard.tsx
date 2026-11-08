@@ -33,6 +33,7 @@ export function PedidoKanbanCard({
   onMoveTo,
   onOpenAudit,
   onAntecipar,
+  onDividir,
   variant = "default",
   dragging,
 }: {
@@ -42,6 +43,7 @@ export function PedidoKanbanCard({
   onMoveTo: (destino: string) => void;
   onOpenAudit?: (numeroPedido: string) => void;
   onAntecipar?: (numeroPedido: string) => void;
+  onDividir?: () => void;
   variant?: "default" | "futuro" | "local" | "retorno";
   dragging?: boolean;
 }) {
@@ -65,6 +67,8 @@ export function PedidoKanbanCard({
   const oportunidadeDica = raw.oportunidade_dica ?? "";
   const isFuturo = variant === "futuro";
   const numeroPedido = String(pedido.numero_pedido ?? "");
+  const parte = String(raw.parte ?? "");
+  const pesoTotalLinha = Number(raw.peso_total_linha ?? 0);
   const of = String(raw.of_ano ?? "");
 
   return (
@@ -137,6 +141,16 @@ export function PedidoKanbanCard({
                   Backlog Futuro
                 </Badge>
               )}
+              {parte && (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] px-1.5 py-0 h-5 border-accent/50 text-accent"
+                  title={pesoTotalLinha ? `Linha total: ${pesoTotalLinha.toLocaleString("pt-BR")} kg` : undefined}
+                >
+                  Parte {parte}
+                  {pesoTotalLinha ? ` · de ${pesoTotalLinha.toLocaleString("pt-BR")} kg` : ""}
+                </Badge>
+              )}
             </div>
             <span className="font-bold font-mono text-sm shrink-0">
               {peso.toLocaleString("pt-BR")} kg
@@ -166,6 +180,9 @@ export function PedidoKanbanCard({
             <DropdownMenuItem onClick={() => onOpenAudit?.(id)}>
               Ver auditoria
             </DropdownMenuItem>
+            {onDividir && peso > 1 && (
+              <DropdownMenuItem onClick={() => onDividir()}>Dividir carga…</DropdownMenuItem>
+            )}
             {destinos
               .filter((d) => d.id !== columnId)
               .map((d) => (

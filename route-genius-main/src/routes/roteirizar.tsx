@@ -24,7 +24,7 @@ export const Route = createFileRoute("/roteirizar")({
 
 function RoteirizarPage() {
   const sessionId = getStoredSessionId();
-  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, moverMutation, anteciparMutation, segundaViagemMutation } =
+  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, moverMutation, anteciparMutation, segundaViagemMutation, dividirMutation } =
     useLogisticaSession(sessionId);
   const [lastWarning, setLastWarning] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -108,6 +108,12 @@ function RoteirizarPage() {
     }
   };
 
+  const handleDividir = async (payload: { id_carga: string; peso_kg: number }) => {
+    if (!sessionId) return;
+    const resp = await dividirMutation.mutateAsync({ sid: sessionId, body: payload });
+    setLastWarning(resp.warning ?? "");
+  };
+
   const handleAntecipar = async (payload: {
     numero_pedido: string;
     motivo_adiantamento: string;
@@ -186,8 +192,9 @@ function RoteirizarPage() {
           <TabsContent value="kanban" className="mt-4">
             <RouteKanbanBoard
               data={data}
-              loading={moverMutation.isPending || anteciparMutation.isPending}
+              loading={moverMutation.isPending || anteciparMutation.isPending || dividirMutation.isPending}
               onMove={handleMove}
+              onDividir={handleDividir}
               onAntecipar={handleAntecipar}
               onExportRomaneio={handleExportRomaneioCaminhao}
               exportingCaminhaoId={exportingCaminhaoId}
