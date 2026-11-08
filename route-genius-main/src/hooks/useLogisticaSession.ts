@@ -136,8 +136,11 @@ export function useLogisticaSession(sessionId: string | null) {
         queryClient.setQueryData(["roteirizacao", sid], ctx.prev);
       }
     },
-    onSuccess: (data, { sid }) => {
+    onSuccess: (data, { sid, body }) => {
       queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
+      if (body.liberar_representante) {
+        queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
+      }
     },
   });
 

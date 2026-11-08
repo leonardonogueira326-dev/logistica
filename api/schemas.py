@@ -218,6 +218,10 @@ class MoverPedidoSchema(BaseModel):
     destino: str
     motivo: str = ""
     forcar: bool = False
+    # Kanban: o operador soltou um card "Consultar representante" num caminhão
+    # e confirmou que o representante liberou.
+    liberar_representante: bool = False
+    autorizado_por: str = ""
 
 
 class DividirCargaSchema(BaseModel):

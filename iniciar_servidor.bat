@@ -8,10 +8,17 @@ if not exist .venv\Scripts\python.exe (
 )
 set LOGISTICA_OLLAMA_MODEL=qwen2.5:3b
 
+if not exist logs mkdir logs
 echo Preparando as telas...
+if exist route-genius-main\dist rmdir /s /q route-genius-main\dist
 pushd route-genius-main
-call npm run build >nul 2>&1 || (popd & echo [ERRO] Falha ao compilar as telas. & pause & exit /b 1)
+call npm run build > ..\logs\build.log 2>&1
 popd
+if not exist route-genius-main\dist\client\_shell.html (
+  echo [ERRO] Falha ao compilar as telas. Detalhes em logs\build.log
+  pause
+  exit /b 1
+)
 
 echo.
 echo ============================================================

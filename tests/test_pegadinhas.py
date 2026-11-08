@@ -4,6 +4,7 @@ Catálogo de pegadinhas das observações comerciais.
 Cada caso é uma frase real (ou quase) vista nos PDFs de faturamento e o que
 o sistema deve concluir. Ao encontrar uma pegadinha nova: adicione aqui.
 """
+from __future__ import annotations
 
 import pytest
 

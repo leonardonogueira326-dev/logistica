@@ -1,3 +1,4 @@
+from __future__ import annotations
 import pytest
 
 from recebimento import extrair_restricao_recebimento as extrair

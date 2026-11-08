@@ -5,6 +5,7 @@ Casos reais (PDF de 19/06):
 - 003060/26/002 aparece 3x com OFs 003435/26, 008761/25 e 000001/26;
 - o mesmo item+OF pode voltar outro dia com o saldo (300 kg hoje, 700 kg amanhã).
 """
+from __future__ import annotations
 
 import pytest
 

@@ -9,10 +9,7 @@ import {
   Upload,
   ClipboardCheck,
   TruckIcon,
-  AlertTriangle,
-  PackageCheck,
-  Radio,
-  PhoneCall } from "lucide-react";
+  Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HistoricoSearch } from "@/components/HistoricoSearch";
 
@@ -20,11 +17,8 @@ const navItems = [
   { to: "/", label: "Resumo Executivo", icon: LayoutDashboard },
   { to: "/setup", label: "Mesa de Comando", icon: Settings2 },
   { to: "/upload", label: "Upload & Processamento", icon: Upload },
-  { to: "/validacao", label: "Quarentena — Validação", icon: ClipboardCheck },
-  { to: "/roteirizar", label: "Pronto p/ Roteirizar", icon: TruckIcon },
-  { to: "/representantes", label: "Pendências / Representante", icon: PhoneCall },
-  { to: "/bloqueados", label: "Bloqueados & Pendências", icon: AlertTriangle },
-  { to: "/retiras", label: "Retiras (FOB)", icon: PackageCheck },
+  { to: "/pendencias", label: "Pendências", icon: ClipboardCheck },
+  { to: "/roteirizar", label: "Roteirizar", icon: TruckIcon },
 ] as const;
 
 /** Status REAL da IA local (Ollama), consultado na API a cada minuto. */

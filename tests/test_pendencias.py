@@ -7,6 +7,7 @@ Quem precisa agir em cada linha.
 - Pagamento antecipado: qualquer frete, fica parado até o comercial liberar.
 - Peso zerado: qualquer frete, a logística precisa informar o peso.
 """
+from __future__ import annotations
 
 import pytest
 

@@ -49,7 +49,13 @@ from motor_ingestao import MotorIngestao  # noqa: E402
 from motor_logistica import MotorLogistica  # noqa: E402
 import config  # noqa: E402
 from normalizador import formatar_kg, mesma_linha, normalizar_texto, resolver_rota_logistica  # noqa: E402
-from pendencias import motivo_parado, pendencias as calc_pendencias  # noqa: E402
+from pendencias import (  # noqa: E402
+    CONSULTA_REPRESENTANTE,
+    PAGAMENTO_ANTECIPADO,
+    PESO_ZERADO,
+    motivo_parado,
+    pendencias as calc_pendencias,
+)
 from representantes import aprender_representante  # noqa: E402
 from equipe import equipe_inicial, frota_cadastrada, lembrar  # noqa: E402
 from romaneio_planilha import gerar_romaneio_planilha  # noqa: E402
@@ -116,6 +122,14 @@ def _nomes_veiculos(motor: MotorLogistica) -> dict[str, str]:
         r.veiculo_id: (r.veiculo_nome if contagem[r.veiculo_nome] == 1 else f"{r.veiculo_nome} ({r.veiculo_id})")
         for r in motor.rotas
     }
+
+
+_COLUNAS_NAO_VEICULO = {
+    "BACKLOG",
+    "COLETAS",
+    config.COD_BACKLOG_FUTURO,
+    config.COD_BACKLOG_LOCAL,
+}
 
 
 def _alocar_resolvidos(session_id: str, ids: list[str]) -> dict[str, str]:
@@ -859,6 +873,32 @@ def mover_pedido(session_id: str, body: MoverPedidoSchema) -> MoverPedidoRespons
 
     motor = _motor_from_roteirizacao(data)
 
+    # Para caminhão: linha travada (comercial / peso zerado) não sobe;
+    # consulta ao representante precisa da confirmação do operador.
+    ref = None
+    if body.destino.upper() not in _COLUNAS_NAO_VEICULO:
+        try:
+            _, consolidados, _ = _get_active_consolidados(session_id)
+        except HTTPException:
+            consolidados = []
+        id_linha = body.numero_pedido.split("@")[0]
+        ref = next((c for c in consolidados if mesma_linha(c, id_linha)), None)
+        if ref is not None:
+            abertas = calc_pendencias(ref, _limite_consulta())
+            travas = [p for p in abertas if p in (PAGAMENTO_ANTECIPADO, PESO_ZERADO)]
+            if travas:
+                nomes = {PAGAMENTO_ANTECIPADO: "aguardando liberação do comercial", PESO_ZERADO: "peso zerado"}
+                raise HTTPException(
+                    status_code=400,
+                    detail="Linha travada (" + ", ".join(nomes[t] for t in travas)
+                    + "). Resolva na página Pendências.",
+                )
+            if CONSULTA_REPRESENTANTE in abertas and not body.liberar_representante:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Confirme que o representante liberou antes de carregar.",
+                )
+
     ok, warning = motor.mover_pedido(
         body.numero_pedido,
         body.destino,
@@ -871,6 +911,21 @@ def mover_pedido(session_id: str, body: MoverPedidoSchema) -> MoverPedidoRespons
 
     payload = motor.para_dict()
     store.save_roteirizacao(session_id, payload)
+
+    if ref is not None and body.liberar_representante:
+        agora = datetime.now(timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
+        quem = body.autorizado_por.strip() or ref.representante
+        _patch_consolidado_session(
+            session_id,
+            ref.id_item or ref.numero_pedido,
+            {
+                "consulta_representante": "LIBERADO",
+                "consulta_em": agora,
+                "representante_autorizou": quem,
+                "motivo_adiantamento": f"Liberado pelo representante {quem}",
+                "auditoria": (ref.auditoria + f" | CONSULTA REPRESENTANTE {agora}: Liberado por {quem} (Kanban)").strip(" |"),
+            },
+        )
     return MoverPedidoResponseSchema(
         ok=True,
         warning=warning,

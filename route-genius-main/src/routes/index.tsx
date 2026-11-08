@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Loader2, Package, Truck, TrendingUp } from "lucide-react";
+import { Loader2, Package, PackageCheck, Truck, TrendingUp } from "lucide-react";
+import { useState } from "react";
 
 import { VehicleMetricsCompact } from "@/components/logistica/VehicleMetrics";
 import {
@@ -49,6 +50,9 @@ function ResumoExecutivo() {
     ? roteirizacao.rotas.reduce((s, r) => s + r.peso_alocado_kg, 0)
     : 0;
   const jornadaMax = roteirizacao?.jornada_maxima_minutos ?? 600;
+  const retiras = (consolidados?.consolidados ?? []).filter(
+    (c) => c.status === "RETIRA FOB" || c.tipo_frete === "RETIRA_FOB",
+  );
 
   return (
     <div className="p-6 space-y-6">
@@ -63,11 +67,12 @@ function ResumoExecutivo() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <KpiCard icon={TrendingUp} label="Pedidos Liberados" value={liberados} hint={`de ${totalConsolidados} consolidados`} />
         <KpiCard icon={Package} label="Alocados na Frota" value={String(alocados)} hint={`${pesoAlocado.toLocaleString("pt-BR")} kg`} />
         <KpiCard icon={Truck} label="Caminhões Ativos" value={String(roteirizacao?.rotas.length ?? 0)} hint="com carga ou disponíveis" />
         <KpiCard icon={Package} label="Backlog" value={String(roteirizacao?.backlog.length ?? 0)} hint="aguardando decisão" />
+        <RetirasCard retiras={retiras} />
       </div>
 
       {roteirizacao && roteirizacao.rotas.length > 0 && (
@@ -149,6 +154,40 @@ function KpiCard({
       </div>
       <div className="mt-2 text-3xl font-bold">{value}</div>
       <div className="mt-1 text-xs text-muted-foreground">{hint}</div>
+    </div>
+  );
+}
+
+function RetirasCard({ retiras }: { retiras: { id_item?: string; numero_pedido: string; of_ano?: string; cliente: string; peso_kg: number; transportadora?: string }[] }) {
+  const [aberto, setAberto] = useState(false);
+  const peso = retiras.reduce((s, r) => s + (r.peso_kg || 0), 0);
+  return (
+    <div className="bg-card rounded-xl border border-border p-5 shadow-sm md:col-span-1">
+      <button type="button" className="w-full text-left" onClick={() => setAberto((v) => !v)} disabled={!retiras.length}>
+        <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted-foreground">
+          <PackageCheck className="w-4 h-4" /> Retiras hoje
+        </div>
+        <div className="mt-2 text-3xl font-bold">{retiras.length}</div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {peso.toLocaleString("pt-BR")} kg{retiras.length ? (aberto ? " · ocultar lista" : " · ver lista") : ""}
+        </div>
+      </button>
+      {aberto && (
+        <ul className="mt-3 max-h-64 space-y-1.5 overflow-y-auto border-t pt-3 text-xs">
+          {retiras.map((r) => (
+            <li key={r.id_item || r.numero_pedido} className="flex justify-between gap-2">
+              <span className="min-w-0">
+                <span className="block truncate font-medium">{r.cliente}</span>
+                <span className="font-mono text-muted-foreground">
+                  {r.numero_pedido}
+                  {r.of_ano ? ` · OF ${r.of_ano}` : ""}
+                </span>
+              </span>
+              <span className="shrink-0 font-mono">{(r.peso_kg || 0).toLocaleString("pt-BR")} kg</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

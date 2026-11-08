@@ -76,9 +76,9 @@ function UploadPage() {
           `${ing.linhas_novas ?? 0} linha(s) nova(s) adicionadas ao quadro do dia. ` +
             "O que já estava montado nos caminhões não mudou.",
         );
-        setTimeout(() => navigate({ to: "/validacao" }), 1800);
+        setTimeout(() => navigate({ to: "/pendencias" }), 1800);
       } else {
-        setTimeout(() => navigate({ to: "/validacao" }), 600);
+        setTimeout(() => navigate({ to: "/pendencias" }), 600);
       }
     } catch (err) {
       setStep("error");

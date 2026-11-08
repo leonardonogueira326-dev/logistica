@@ -3,6 +3,7 @@ Pedidos com Dt. Produção a 3 dias ÚTEIS ou mais da data do PDF ficam parados
 até o representante liberar ("podemos carregar hoje?").
 Dt. Produção no passado ou próxima: sai normalmente.
 """
+from __future__ import annotations
 
 from datetime import date
 
