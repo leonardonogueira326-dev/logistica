@@ -29,7 +29,8 @@ router = APIRouter(prefix="/api/pedidos-manuais", tags=["pedidos-manuais"])
 
 
 def _dict_to_consolidado(data: dict) -> PedidoConsolidado:
-    return PedidoConsolidado(**{k: data.get(k, "") for k in PedidoConsolidado.__dataclass_fields__})
+    fields = PedidoConsolidado.__dataclass_fields__
+    return PedidoConsolidado(**{k: data.get(k, fields[k].default) for k in fields})
 
 
 @router.post("", response_model=PedidoManualResponseSchema)

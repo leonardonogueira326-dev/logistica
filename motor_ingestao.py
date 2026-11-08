@@ -9,7 +9,12 @@ from dataclasses import asdict
 from pathlib import Path
 
 import config
-from extrator_clientes import obter_lookup_clientes
+from extrator_clientes import obter_lookup_clientes, resolver_arquivo_cadastro
+from cadastro_geolocalizado import (
+    buscar_por_codigo_cliente,
+    carregar_cadastro_geolocalizado,
+    coordenadas_validas,
+)
 from extrator_email import ExtratorEmail, buscar_xlsb_na_pasta
 from extrator_excel import ExtratorExcel
 from aprendizado_regras import consultar_aprendizado
@@ -62,13 +67,57 @@ class MotorIngestao:
         self.consolidados: list[PedidoConsolidado] = []
         self.params = carregar_parametros()
         self._lookup_clientes = obter_lookup_clientes(str(self.pasta_dados))
+        self._cadastro_geo = carregar_cadastro_geolocalizado()
+        self._caminho_cadastro_mestre = str(resolver_arquivo_cadastro(str(self.pasta_dados)) or "")
         if not self._lookup_clientes:
             self.avisos.append(
-                "Cadastro mestre não encontrado — enriquecimento desabilitado."
+                "Cadastro mestre não encontrado — enriquecimento legado desabilitado."
             )
         else:
             self.avisos.append(
                 f"Cadastro mestre carregado: {len(self._lookup_clientes)} clientes"
+            )
+        geo_count = len(self._cadastro_geo.get("registros") or [])
+        if geo_count:
+            self.avisos.append(
+                f"Cadastro geolocalizado: {geo_count} registros (data/cadastro_mestre_geolocalizado.json)"
+            )
+        if self._caminho_cadastro_mestre:
+            self.avisos.append(f"Cadastro legado: {self._caminho_cadastro_mestre}")
+
+    def _aplicar_cadastro_geolocalizado(self, pedido: PedidoFaturamento) -> None:
+        chave = normalizar_codigo_cliente(pedido.cliente_codigo)
+        if not chave:
+            return
+
+        geo = buscar_por_codigo_cliente(chave, self._cadastro_geo)
+        if not geo:
+            self.avisos.append(
+                f"Cliente sem coordenada cadastrada: {pedido.cliente_codigo} "
+                f"({pedido.cliente_nome}) — ausente do cadastro geolocalizado."
+            )
+            return
+
+        if geo.get("bairro"):
+            pedido.bairro = normalizar_texto(str(geo["bairro"]))
+            pedido.bairro_destino = pedido.bairro
+        if geo.get("cidade"):
+            pedido.cidade = normalizar_texto(str(geo["cidade"]))
+            pedido.cidade_destino = pedido.cidade
+        if geo.get("estado"):
+            pedido.estado = normalizar_texto(str(geo["estado"]))
+            pedido.estado_destino = pedido.estado
+        if geo.get("cep"):
+            pedido.cep = str(geo["cep"]).strip()
+            pedido.cep_destino = pedido.cep
+
+        if coordenadas_validas(geo.get("latitude"), geo.get("longitude")):
+            pedido.latitude = float(str(geo["latitude"]).replace(",", "."))
+            pedido.longitude = float(str(geo["longitude"]).replace(",", "."))
+        else:
+            nome = geo.get("nome") or pedido.cliente_nome
+            self.avisos.append(
+                f"Cliente sem coordenada cadastrada: {pedido.cliente_codigo} ({nome})."
             )
 
     def executar(
@@ -181,6 +230,7 @@ class MotorIngestao:
 
             cidade_rota = pedido.cidade_destino or normalizar_texto(pedido.cidade)
             pedido.rota_logistica = resolver_rota_logistica(cidade_rota, self.params)
+            self._aplicar_cadastro_geolocalizado(pedido)
         except Exception as exc:
             self.avisos.append(f"Enriquecimento {pedido.numero_pedido}: {exc}")
 
@@ -332,6 +382,8 @@ class MotorIngestao:
                     hash_id=h_id,
                     fonte_entrada="PDF",
                     aceita_antecipacao=aceita_ant,
+                    latitude=pedido.latitude,
+                    longitude=pedido.longitude,
                 )
 
                 status, motivo, auditoria = self._classificar_pedido(

@@ -6,7 +6,7 @@ Fonte: TESTE.xlsx - Planilha1.csv (preferencial) ou TESTE.xlsx.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -21,6 +21,9 @@ class CadastroClientes:
         self._lookup: dict[str, dict[str, str]] = {}
         self._caminho_carregado: str = ""
         self._pasta_ou_caminho = pasta_ou_caminho
+        self._df: pd.DataFrame | None = None
+        self._col_map: dict[str, str] = {}
+        self._sheet_name = "Planilha1"
 
     def carregar(self, caminho: str = "") -> None:
         """Carrega CSV ou XLSX e constrói o lookup."""
@@ -34,6 +37,9 @@ class CadastroClientes:
 
         self._lookup = self._construir_lookup(df)
         self._caminho_carregado = str(path)
+        self._df = df.copy()
+        self._col_map = self._mapear_colunas(df.columns.tolist())
+        self._garantir_colunas_coordenadas()
 
     def buscar_por_codigo(self, codigo: str) -> Optional[dict[str, str]]:
         chave = normalizar_codigo_cliente(codigo)
@@ -51,6 +57,89 @@ class CadastroClientes:
     @property
     def lookup(self) -> dict[str, dict[str, str]]:
         return self._lookup
+
+    def _garantir_colunas_coordenadas(self) -> None:
+        if self._df is None:
+            return
+        if "latitude" not in self._col_map:
+            self._df["Latitude"] = ""
+            self._col_map["latitude"] = "Latitude"
+        if "longitude" not in self._col_map:
+            self._df["Longitude"] = ""
+            self._col_map["longitude"] = "Longitude"
+
+    def _indice_por_codigo(self, codigo: str) -> int | None:
+        if self._df is None or "codigo" not in self._col_map:
+            return None
+        col = self._col_map["codigo"]
+        for idx, val in self._df[col].items():
+            if normalizar_codigo_cliente(str(val or "")) == codigo:
+                return int(idx)
+        return None
+
+    def atualizar_coordenadas(self, codigo: str, latitude: float, longitude: float) -> bool:
+        chave = normalizar_codigo_cliente(codigo)
+        if not chave or chave not in self._lookup:
+            return False
+
+        lat_str = f"{latitude:.6f}"
+        lon_str = f"{longitude:.6f}"
+        self._lookup[chave]["latitude"] = lat_str
+        self._lookup[chave]["longitude"] = lon_str
+
+        if self._df is not None:
+            idx = self._indice_por_codigo(chave)
+            if idx is not None:
+                self._df.at[idx, self._col_map["latitude"]] = lat_str
+                self._df.at[idx, self._col_map["longitude"]] = lon_str
+        return True
+
+    def inserir_cliente(self, dados: dict[str, Any], latitude: float, longitude: float) -> bool:
+        codigo = normalizar_codigo_cliente(str(dados.get("codigo") or ""))
+        if not codigo or self._df is None:
+            return False
+
+        self._garantir_colunas_coordenadas()
+        nova_linha: dict[str, Any] = {}
+        for chave, col in self._col_map.items():
+            nova_linha[col] = ""
+
+        if "codigo" in self._col_map:
+            nova_linha[self._col_map["codigo"]] = codigo
+        if "razao_social" in self._col_map:
+            nova_linha[self._col_map["razao_social"]] = dados.get("razao_social", "")
+        if "endereco" in self._col_map:
+            nova_linha[self._col_map["endereco"]] = dados.get("endereco", "")
+        if "bairro" in self._col_map:
+            nova_linha[self._col_map["bairro"]] = dados.get("bairro", "")
+        if "cidade" in self._col_map:
+            nova_linha[self._col_map["cidade"]] = dados.get("cidade", "")
+        if "estado" in self._col_map:
+            nova_linha[self._col_map["estado"]] = dados.get("estado", "")
+        if "cep" in self._col_map:
+            nova_linha[self._col_map["cep"]] = dados.get("cep", "")
+        if "representante" in self._col_map:
+            nova_linha[self._col_map["representante"]] = dados.get("representante", "")
+
+        nova_linha[self._col_map["latitude"]] = f"{latitude:.6f}"
+        nova_linha[self._col_map["longitude"]] = f"{longitude:.6f}"
+
+        self._df = pd.concat([self._df, pd.DataFrame([nova_linha])], ignore_index=True)
+        self._lookup = self._construir_lookup(self._df)
+        return True
+
+    def salvar(self, caminho: str = "") -> str:
+        destino = Path(caminho or self._caminho_carregado)
+        if not destino or self._df is None:
+            raise ValueError("Nenhum cadastro carregado para salvar.")
+
+        if destino.suffix.lower() == ".csv":
+            self._df.to_csv(destino, index=False, encoding="utf-8-sig")
+        else:
+            self._df.to_excel(destino, sheet_name=self._sheet_name, index=False)
+
+        self._caminho_carregado = str(destino)
+        return str(destino)
 
     def _resolver_arquivo(self, pasta_ou_caminho: str) -> Optional[Path]:
         if not pasta_ou_caminho:
@@ -112,17 +201,24 @@ class CadastroClientes:
                 else:
                     aceita = "SIM"
 
+                estado_col = col_map.get("estado")
+                lat_col = col_map.get("latitude")
+                lon_col = col_map.get("longitude")
+
                 lookup[chave] = {
                     "codigo": chave,
                     "razao_social": razao,
                     "endereco": endereco,
                     "bairro": bairro,
                     "cidade": cidade,
+                    "estado": normalizar_texto(row.get(estado_col, "")) if estado_col else "",
                     "cep": cep,
                     "representante_codigo": rep_cod,
                     "representante_nome": representante,
                     "representante": representante,
                     "aceita_antecipacao": aceita,
+                    "latitude": str(row.get(lat_col, "") or "").strip() if lat_col else "",
+                    "longitude": str(row.get(lon_col, "") or "").strip() if lon_col else "",
                 }
             except Exception:
                 continue
@@ -153,8 +249,57 @@ class CadastroClientes:
                 resultado["representante_codigo"] = col
             elif "aceita" in norm and "antecip" in norm:
                 resultado["aceita_antecipacao"] = col
+            elif norm in ("latitude", "lat"):
+                resultado["latitude"] = col
+            elif norm in ("longitude", "long", "lng", "lon"):
+                resultado["longitude"] = col
+            elif norm in ("estado", "uf"):
+                resultado["estado"] = col
 
         return resultado
+
+
+def resolver_arquivo_cadastro(pasta_dados: str = "") -> Path | None:
+    """Resolve caminho do cadastro mestre (config operacional → pasta de dados)."""
+    try:
+        from param_manager import carregar_parametros
+
+        params = carregar_parametros()
+    except Exception:
+        params = {}
+
+    rel = str(params.get("cadastro_clientes_path", config.ARQUIVO_CADASTRO_XLSX)).strip()
+    raiz = Path(__file__).resolve().parent
+
+    candidatos: list[Path] = []
+    if rel:
+        p = Path(rel)
+        candidatos.append(p if p.is_absolute() else raiz / p)
+
+    if pasta_dados:
+        cadastro = CadastroClientes(pasta_dados)
+        resolvido = cadastro._resolver_arquivo(pasta_dados)
+        if resolvido:
+            candidatos.append(resolvido)
+
+    candidatos.extend([raiz / config.ARQUIVO_CADASTRO_XLSX, raiz / config.ARQUIVO_CADASTRO_CSV])
+
+    vistos: set[str] = set()
+    for cand in candidatos:
+        if not cand:
+            continue
+        chave = str(cand.resolve())
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        if cand.is_file():
+            return cand
+    return None
+
+
+def invalidar_cache_cadastro() -> None:
+    _cache_cadastro.clear()
+    _cache_lookup.clear()
 
 
 _cache_cadastro: dict[str, CadastroClientes] = {}
@@ -163,24 +308,27 @@ _cache_lookup: dict[str, dict[str, dict[str, str]]] = {}
 
 def carregar_cadastro(pasta_dados: Path) -> dict[str, dict[str, str]]:
     """Carrega CSV/XLSX e retorna lookup dict codigo -> dados logísticos."""
-    cadastro = CadastroClientes(str(pasta_dados))
-    cadastro.carregar()
+    path = resolver_arquivo_cadastro(str(pasta_dados))
+    cadastro = CadastroClientes(str(path) if path else str(pasta_dados))
+    cadastro.carregar(str(path) if path else "")
     return cadastro.lookup
 
 
 def obter_lookup_clientes(pasta: str) -> dict[str, dict[str, str]]:
     """Retorna lookup cacheado (carrega uma vez por pasta)."""
-    chave = str(Path(pasta).resolve()) if pasta else ""
+    path = resolver_arquivo_cadastro(pasta)
+    chave = str(path.resolve()) if path else str(Path(pasta).resolve()) if pasta else ""
     if chave not in _cache_lookup:
-        _cache_lookup[chave] = carregar_cadastro(Path(pasta))
+        _cache_lookup[chave] = carregar_cadastro(Path(pasta) if pasta else Path("."))
     return _cache_lookup[chave]
 
 
 def obter_cadastro_clientes(pasta_ou_caminho: str) -> CadastroClientes:
     """Retorna instância cacheada do cadastro (recarrega se pasta mudar)."""
-    chave = str(Path(pasta_ou_caminho).resolve()) if pasta_ou_caminho else ""
+    path = resolver_arquivo_cadastro(pasta_ou_caminho)
+    chave = str(path.resolve()) if path else str(Path(pasta_ou_caminho).resolve()) if pasta_ou_caminho else ""
     if chave not in _cache_cadastro:
-        cadastro = CadastroClientes(pasta_ou_caminho)
-        cadastro.carregar()
+        cadastro = CadastroClientes(str(path) if path else pasta_ou_caminho)
+        cadastro.carregar(str(path) if path else "")
         _cache_cadastro[chave] = cadastro
     return _cache_cadastro[chave]

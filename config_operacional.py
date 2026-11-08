@@ -84,6 +84,7 @@ def _seed_configuracao() -> dict[str, Any]:
             "rotas_vizinhas": params.get("rotas_vizinhas", {}),
             "motivos_backlog": params.get("motivos_backlog", ""),
             "cadastro_clientes_path": params.get("cadastro_clientes_path", config.ARQUIVO_CADASTRO_XLSX),
+            "corredores_logisticos": deepcopy(config.CORREDORES_LOGISTICOS_DEFAULT),
         },
     }
 
@@ -236,6 +237,23 @@ def configuracao_para_parametros(cfg: dict[str, Any] | None = None) -> dict[str,
         if rota_id not in tempos:
             tempos[rota_id] = int(rota.get("tempo_medio_viagem_min", 300))
 
+    tempos_cidade: dict[str, int] = {}
+    for rota in cfg.get("rotas", []):
+        cidade = str(rota.get("cidade", "")).strip().upper()
+        if cidade:
+            tempos_cidade[cidade] = int(rota.get("tempo_medio_viagem_min", 300))
+    for alias, canon in (
+        ("SBO", "SANTA BARBARA D OESTE"),
+        ("SANTA BARBARA DO OESTE", "SANTA BARBARA D OESTE"),
+    ):
+        if canon in tempos_cidade and alias not in tempos_cidade:
+            tempos_cidade[alias] = tempos_cidade[canon]
+    if "AMERICANA" not in tempos_cidade:
+        tempos_cidade["AMERICANA"] = int(tempos.get("ROTA_INTERIOR_RMC", 120))
+    if "SANTA BARBARA D OESTE" not in tempos_cidade:
+        tempos_cidade["SANTA BARBARA D OESTE"] = 30
+        tempos_cidade["SBO"] = 30
+
     veiculos: dict[str, dict[str, Any]] = {}
     ordem_ids: list[str] = []
     for v in cfg.get("frota", []):
@@ -257,6 +275,7 @@ def configuracao_para_parametros(cfg: dict[str, Any] | None = None) -> dict[str,
         "mapeamento_cidades_rotas": mapeamento,
         "rotas_vizinhas": operacao.get("rotas_vizinhas", {}),
         "tempos_viagem_rota_min": tempos,
+        "tempos_viagem_cidade_min": tempos_cidade,
         "tempo_descarga_minutos": int(horarios.get("tempo_descarga_minutos", 20)),
         "tempo_almoco_minutos": int(horarios.get("tempo_almoco_minutos", 60)),
         "jornada_maxima_minutos": int(horarios.get("jornada_maxima_minutos", 600)),
@@ -267,6 +286,9 @@ def configuracao_para_parametros(cfg: dict[str, Any] | None = None) -> dict[str,
         "permitir_spyder_no_bau": bool(operacao.get("permitir_spyder_no_bau", True)),
         "comprimentos_longos_mm": operacao.get("comprimentos_longos_mm", "4800, 5900"),
         "motivos_backlog": operacao.get("motivos_backlog", ""),
+        "corredores_logisticos": operacao.get(
+            "corredores_logisticos", config.CORREDORES_LOGISTICOS_DEFAULT
+        ),
         "veiculos": veiculos,
         "ordem_veiculos": ordem_ids,
         "equipe": cfg.get("equipe", {}),

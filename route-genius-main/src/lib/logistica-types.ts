@@ -42,6 +42,8 @@ export interface PedidoConsolidado {
   motivo_adiantamento?: string;
   representante_autorizou?: string;
   aceita_antecipacao?: string;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export interface ResumoIngestao {
@@ -160,6 +162,11 @@ export interface RotaVeiculo {
   peso_alocado_kg: number;
   eficiencia_pct: string;
   tempo_total_min: string;
+  teo_minutos: string;
+  teo_hhmm: string;
+  segunda_viagem_elegivel: boolean;
+  alerta_elastico: boolean;
+  mensagem_alerta_elastico: string;
   retorno_previsto: string;
   qtd_paradas: string;
   pedidos_csv: string;
@@ -171,7 +178,14 @@ export interface Roteirizacao {
   itens_por_veiculo: Record<string, ItemRota[]>;
   backlog: Array<Record<string, string>>;
   backlog_futuro: Array<Record<string, string>>;
+  backlog_local: Array<Record<string, string>>;
   coletas: Array<Record<string, string>>;
+  itens_retorno_por_veiculo: Record<string, ItemRota[]>;
+  viagens_retorno_habilitadas: string[];
+  metricas_retorno: Record<
+    string,
+    { teo_minutos: string; teo_hhmm: string; peso_alocado_kg: number; qtd_pedidos: string }
+  >;
   jornada_maxima_minutos: number;
 }
 
@@ -198,7 +212,20 @@ export const MOTIVOS_BACKLOG = [
 
 export const COLUMN_BACKLOG = "BACKLOG";
 export const COLUMN_BACKLOG_FUTURO = "BACKLOG_FUTURO";
+export const COLUMN_BACKLOG_LOCAL = "BACKLOG_LOCAL";
 export const COLUMN_COLETAS = "COLETAS";
+export const SUFIXO_VIAGEM_RETORNO = "::RETORNO";
+export const TEO_ALERTA_MIN = 510;
+export const TEO_SEGUNDA_VIAGEM_MAX_MIN = 360;
+
+export function idRetornoVeiculo(veiculoId: string): string {
+  return `${veiculoId}${SUFIXO_VIAGEM_RETORNO}`;
+}
+
+export function parseRetornoVeiculo(columnId: string): string | null {
+  if (!columnId.endsWith(SUFIXO_VIAGEM_RETORNO)) return null;
+  return columnId.slice(0, -SUFIXO_VIAGEM_RETORNO.length);
+}
 
 export type ConsolidadoPatch = Partial<
   Pick<

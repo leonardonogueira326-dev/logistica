@@ -7,6 +7,7 @@ import {
   getConsolidados,
   getRoteirizacao,
   ingestSession,
+  habilitarSegundaViagem,
   moverPedido,
   patchConsolidado,
   roteirizar,
@@ -118,6 +119,14 @@ export function useLogisticaSession(sessionId: string | null) {
     },
   });
 
+  const segundaViagemMutation = useMutation({
+    mutationFn: ({ sid, veiculoId }: { sid: string; veiculoId: string }) =>
+      habilitarSegundaViagem(sid, veiculoId),
+    onSuccess: (data, { sid }) => {
+      queryClient.setQueryData(["roteirizacao", sid], data);
+    },
+  });
+
   const debounceTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const patchConsolidadoDebounced = useCallback(
@@ -147,6 +156,7 @@ export function useLogisticaSession(sessionId: string | null) {
     roteirizarMutation,
     moverMutation,
     anteciparMutation,
+    segundaViagemMutation,
     patchConsolidadoDebounced,
   };
 }

@@ -50,6 +50,8 @@ class PedidoConsolidadoSchema(BaseModel):
     motivo_adiantamento: str = ""
     representante_autorizou: str = ""
     aceita_antecipacao: str = "SIM"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class ConsolidadoPatchSchema(BaseModel):
@@ -141,6 +143,11 @@ class RotaVeiculoSchema(BaseModel):
     peso_alocado_kg: float = 0.0
     eficiencia_pct: str = ""
     tempo_total_min: str = ""
+    teo_minutos: str = ""
+    teo_hhmm: str = ""
+    segunda_viagem_elegivel: bool = False
+    alerta_elastico: bool = False
+    mensagem_alerta_elastico: str = ""
     retorno_previsto: str = ""
     qtd_paradas: str = ""
     pedidos_csv: str = ""
@@ -152,7 +159,11 @@ class RoteirizacaoSchema(BaseModel):
     itens_por_veiculo: dict[str, list[ItemRotaSchema]]
     backlog: list[dict[str, str]]
     backlog_futuro: list[dict[str, str]] = Field(default_factory=list)
+    backlog_local: list[dict[str, str]] = Field(default_factory=list)
     coletas: list[dict[str, str]] = Field(default_factory=list)
+    itens_retorno_por_veiculo: dict[str, list[ItemRotaSchema]] = Field(default_factory=dict)
+    viagens_retorno_habilitadas: list[str] = Field(default_factory=list)
+    metricas_retorno: dict[str, dict[str, str | float]] = Field(default_factory=dict)
     jornada_maxima_minutos: int = 600
 
 

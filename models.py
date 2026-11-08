@@ -6,6 +6,7 @@ Todos os campos são tipos simples (str/float), sem listas.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -49,6 +50,8 @@ class PedidoFaturamento:
     exige_syder: str = "NAO"
     bloco_bruto: str = ""
     erro_extracao: str = ""
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 @dataclass
@@ -129,6 +132,8 @@ class PedidoConsolidado:
     motivo_adiantamento: str = ""
     representante_autorizou: str = ""
     aceita_antecipacao: str = "SIM"
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 @dataclass
@@ -165,6 +170,11 @@ class RotaVeiculo:
     peso_alocado_kg: float = 0.0
     eficiencia_pct: str = ""
     tempo_total_min: str = ""
+    teo_minutos: str = ""
+    teo_hhmm: str = ""
+    segunda_viagem_elegivel: bool = False
+    alerta_elastico: bool = False
+    mensagem_alerta_elastico: str = ""
     retorno_previsto: str = ""
     qtd_paradas: str = ""
     pedidos_csv: str = ""

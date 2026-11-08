@@ -27,7 +27,7 @@ interface BacklogRow {
   rota_logistica: string;
   peso_kg: string;
   motivo: string;
-  origem: "backlog" | "consolidado";
+  origem: "backlog" | "backlog_futuro" | "consolidado";
 }
 
 function BloqueadosPage() {

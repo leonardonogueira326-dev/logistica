@@ -6,7 +6,7 @@
       "id": "VAN_MASTER",
       "placa": "",
       "nome": "VAN MASTER",
-      "capacidade_kg": 1800.0,
+      "capacidade_kg": 1800,
       "tipo": "BAU",
       "ativo": false,
       "reserva": true
@@ -15,7 +15,7 @@
       "id": "11.180_BAU_1",
       "placa": "",
       "nome": "11.180 - BAÚ",
-      "capacidade_kg": 6000.0,
+      "capacidade_kg": 6000,
       "tipo": "BAU",
       "ativo": true,
       "reserva": false
@@ -24,7 +24,7 @@
       "id": "11.180_BAU_2",
       "placa": "",
       "nome": "11.180 - BAÚ",
-      "capacidade_kg": 6100.0,
+      "capacidade_kg": 6100,
       "tipo": "BAU",
       "ativo": true,
       "reserva": false
@@ -33,7 +33,7 @@
       "id": "10.160_SYDER",
       "placa": "",
       "nome": "10.160 - SYDER",
-      "capacidade_kg": 4700.0,
+      "capacidade_kg": 4700,
       "tipo": "SYDER",
       "ativo": true,
       "reserva": false
@@ -99,6 +99,12 @@
       "tempo_medio_viagem_min": 120
     },
     {
+      "cidade": "SANTA BARBARA D OESTE",
+      "rota_logistica": "ROTA_INTERIOR_RMC",
+      "macro_regiao": "BASE",
+      "tempo_medio_viagem_min": 30
+    },
+    {
       "cidade": "CONTAGEM",
       "rota_logistica": "ROTA_MG",
       "macro_regiao": "MG",
@@ -112,8 +118,8 @@
     }
   ],
   "horarios": {
-    "inicio_expediente": "07:00",
-    "limite_retorno": "17:00",
+    "inicio_expediente": "4:30",
+    "limite_retorno": "14:30",
     "tempo_descarga_minutos": 20,
     "tempo_almoco_minutos": 60,
     "jornada_maxima_minutos": 600,
@@ -127,7 +133,7 @@
     ]
   },
   "operacao": {
-    "peso_max_spyder_no_bau_kg": 800.0,
+    "peso_max_spyder_no_bau_kg": 800,
     "permitir_spyder_no_bau": true,
     "comprimentos_longos_mm": "4800, 5000, 5900, 6000",
     "rotas_vizinhas": {
@@ -140,6 +146,20 @@
       "ROTA_OUTROS": ""
     },
     "motivos_backlog": "FROTA INSUFICIENTE, LIMITE DE JORNADA ATINGIDO, BLOQUEIO FISCAL, TRAVADO COMERCIAL, RETIRA FOB, TERCEIRO",
-    "cadastro_clientes_path": "TESTE.xlsx"
+    "cadastro_clientes_path": "TESTE.xlsx",
+    "corredores_logisticos": {
+      "1": {
+        "nome": "Norte/Marginal",
+        "prefixos_cep": ["02", "05"]
+      },
+      "2": {
+        "nome": "Oeste/Rodoanel",
+        "prefixos_cep": ["06", "18"]
+      },
+      "3": {
+        "nome": "Sul/ABC",
+        "prefixos_cep": ["09", "04"]
+      }
+    }
   }
 }
