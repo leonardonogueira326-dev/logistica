@@ -179,20 +179,8 @@ class MotorLogistica:
         return int(tempos_rota.get(rota, tempos_rota.get("ROTA_OUTROS", 300)))
 
     def calcular_teo(self, itens: list[dict[str, Any]]) -> int:
-        """TEO = Σ(tempo viagem cidades) + (qtd pedidos × 30 min) + 60 min almoço."""
-        if not itens:
-            return 0
-
-        cidades: set[str] = set()
-        for item in itens:
-            cidade = normalizar_texto(item.get("cidade_destino", "")).replace("'", " ")
-            if cidade:
-                cidades.add(cidade)
-
-        tempo_viagem = sum(self._tempo_viagem_cidade(c) for c in cidades)
-        descarga = int(self.params.get("teo_tempo_descarga_minutos", config.TEO_TEMPO_DESCARGA_MIN))
-        almoco = int(self.params.get("tempo_almoco_minutos", 60))
-        return tempo_viagem + (len(itens) * descarga) + almoco
+        """TEO = o mesmo tempo de rota que o motor usa para decidir (calcular_tempo_rota)."""
+        return self.calcular_tempo_rota(itens)
 
     def _aplicar_teo_rota(self, rota: RotaVeiculo, itens: list[dict[str, Any]]) -> None:
         teo = self.calcular_teo(itens)
@@ -890,20 +878,34 @@ class MotorLogistica:
         return True, "OK"
 
     def calcular_tempo_rota(self, itens: list[dict[str, Any]]) -> int:
+        """
+        Tempo total da rota (minutos) — ÚNICO cálculo do sistema: é o que o motor
+        usa para decidir se cabe na jornada E o que aparece no card (TEO).
+
+        = ida e volta até a cidade mais distante
+        + deslocamento entre cidades (por cidade extra no caminho)
+        + descarga por parada (cliente/cidade)
+        + almoço
+        """
         if not itens:
             return 0
-
-        tempos_map = self.params.get("tempos_viagem_rota_min", {})
-        tempo_viagem = max(
-            tempos_map.get(i.get("rota_logistica", "ROTA_OUTROS"), tempos_map.get("ROTA_OUTROS", 300))
+        cidades = {
+            normalizar_texto(i.get("cidade_destino", "")).replace("'", " ")
             for i in itens
-        )
-
-        paradas = self._contar_paradas_unicas(itens)
-        descarga = int(self.params.get("tempo_descarga_minutos", 20))
+            if i.get("cidade_destino")
+        }
+        if cidades:
+            viagem = max(self._tempo_viagem_cidade(c) for c in cidades)
+        else:
+            tempos_map = self.params.get("tempos_viagem_rota_min", {})
+            viagem = max(
+                int(tempos_map.get(i.get("rota_logistica", "ROTA_OUTROS"), tempos_map.get("ROTA_OUTROS", 300)))
+                for i in itens
+            )
+        entre_cidades = int(self.params.get("tempo_entre_cidades_min", 20)) * max(len(cidades) - 1, 0)
+        descarga = int(self.params.get("tempo_descarga_minutos", config.TEMPO_DESCARGA_MINUTOS))
         almoco = int(self.params.get("tempo_almoco_minutos", 60))
-
-        return tempo_viagem + (paradas * descarga) + almoco
+        return viagem + entre_cidades + self._contar_paradas_unicas(itens) * descarga + almoco
 
     @staticmethod
     def _contar_paradas_unicas(itens: list[dict[str, Any]]) -> int:
@@ -1095,7 +1097,9 @@ class MotorLogistica:
 
         hoje_pt = date_cls.today().strftime("%d/%m/%Y")
         for item in self.backlog_futuro:
-            if (item.get("aceita_antecipacao") or "SIM").upper() == "NAO":
+            # Parado por pendência (representante/comercial/peso): quem destrava é
+            # a pessoa responsável, não uma "antecipação" — sem dica de oportunidade.
+            if (item.get("aceita_antecipacao") or "SIM").upper() == "NAO" or item.get("pendencias"):
                 for k in ("oportunidade", "oportunidade_dica", "oportunidade_veiculo_id", "oportunidade_veiculo_nome"):
                     item.pop(k, None)
                 continue

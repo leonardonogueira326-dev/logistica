@@ -52,6 +52,13 @@ def _init_configuracao() -> None:
     carregar_configuracao()
 
 
+@app.get("/api/ia/status", tags=["health"])
+def ia_status() -> dict:
+    from api.llm_local import status_ia
+
+    return status_ia()
+
+
 @app.get("/api/health", response_model=HealthSchema, tags=["health"])
 def health() -> HealthSchema:
     return HealthSchema()

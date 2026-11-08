@@ -110,16 +110,27 @@ class MotorIngestao:
             )
             return
 
-        if geo.get("bairro"):
+        # O destino de entrega é o do PDF (pode ser redespacho ou outro endereço).
+        # O cadastro só COMPLETA o que falta e só vale se for a mesma cidade.
+        cidade_pdf = normalizar_texto(pedido.cidade_destino or pedido.cidade).replace("'", " ")
+        cidade_geo = normalizar_texto(str(geo.get("cidade") or "")).replace("'", " ")
+        mesma_cidade = not cidade_pdf or not cidade_geo or cidade_pdf == cidade_geo
+        if not mesma_cidade:
+            self.avisos.append(
+                f"{pedido.numero_pedido}: entrega em {cidade_pdf}, cadastro do cliente em "
+                f"{cidade_geo} — mantido o destino do PDF (sem coordenada do cadastro)."
+            )
+            return
+        if geo.get("bairro") and not pedido.bairro_destino:
             pedido.bairro = normalizar_texto(str(geo["bairro"]))
             pedido.bairro_destino = pedido.bairro
-        if geo.get("cidade"):
+        if geo.get("cidade") and not pedido.cidade_destino:
             pedido.cidade = normalizar_texto(str(geo["cidade"]))
             pedido.cidade_destino = pedido.cidade
-        if geo.get("estado"):
+        if geo.get("estado") and not pedido.estado_destino:
             pedido.estado = normalizar_texto(str(geo["estado"]))
             pedido.estado_destino = pedido.estado
-        if geo.get("cep"):
+        if geo.get("cep") and not pedido.cep_destino:
             pedido.cep = str(geo["cep"]).strip()
             pedido.cep_destino = pedido.cep
 

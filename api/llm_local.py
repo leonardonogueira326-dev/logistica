@@ -98,6 +98,22 @@ def classificar_observacao_llm(
         return None
 
 
+def status_ia() -> dict[str, object]:
+    """Ollama está rodando? O modelo configurado está baixado?"""
+    base = OLLAMA_URL.split("/api/")[0]
+    try:
+        with urllib.request.urlopen(f"{base}/api/tags", timeout=2) as resp:
+            modelos = [m.get("name", "") for m in json.loads(resp.read().decode("utf-8")).get("models", [])]
+    except Exception:  # noqa: BLE001
+        return {"online": False, "modelo": OLLAMA_MODEL, "mensagem": "Ollama não está rodando — sistema segue sem IA"}
+    tem_modelo = any(m == OLLAMA_MODEL or m.split(":")[0] == OLLAMA_MODEL.split(":")[0] for m in modelos)
+    return {
+        "online": tem_modelo,
+        "modelo": OLLAMA_MODEL,
+        "mensagem": "IA local pronta" if tem_modelo else f"Modelo {OLLAMA_MODEL} não baixado (rode instalar.bat)",
+    }
+
+
 def tipo_frete_da_sugestao(status_llm: str) -> str | None:
     """Converte status LLM para tipo_frete interno."""
     return TIPO_FRETE_POR_STATUS.get(status_llm)
