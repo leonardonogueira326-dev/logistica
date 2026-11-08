@@ -14,6 +14,7 @@ import { Route as UploadRouteImport } from './routes/upload'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as RoteirizarRouteImport } from './routes/roteirizar'
 import { Route as RetirasRouteImport } from './routes/retiras'
+import { Route as RepresentantesRouteImport } from './routes/representantes'
 import { Route as BloqueadosRouteImport } from './routes/bloqueados'
 import { Route as IndexRouteImport } from './routes/index'
 
@@ -42,6 +43,11 @@ const RetirasRoute = RetirasRouteImport.update({
   path: '/retiras',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RepresentantesRoute = RepresentantesRouteImport.update({
+  id: '/representantes',
+  path: '/representantes',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BloqueadosRoute = BloqueadosRouteImport.update({
   id: '/bloqueados',
   path: '/bloqueados',
@@ -56,6 +62,7 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/bloqueados': typeof BloqueadosRoute
+  '/representantes': typeof RepresentantesRoute
   '/retiras': typeof RetirasRoute
   '/roteirizar': typeof RoteirizarRoute
   '/setup': typeof SetupRoute
@@ -65,6 +72,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/bloqueados': typeof BloqueadosRoute
+  '/representantes': typeof RepresentantesRoute
   '/retiras': typeof RetirasRoute
   '/roteirizar': typeof RoteirizarRoute
   '/setup': typeof SetupRoute
@@ -75,6 +83,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/bloqueados': typeof BloqueadosRoute
+  '/representantes': typeof RepresentantesRoute
   '/retiras': typeof RetirasRoute
   '/roteirizar': typeof RoteirizarRoute
   '/setup': typeof SetupRoute
@@ -86,6 +95,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/bloqueados'
+    | '/representantes'
     | '/retiras'
     | '/roteirizar'
     | '/setup'
@@ -95,6 +105,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/bloqueados'
+    | '/representantes'
     | '/retiras'
     | '/roteirizar'
     | '/setup'
@@ -104,6 +115,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/bloqueados'
+    | '/representantes'
     | '/retiras'
     | '/roteirizar'
     | '/setup'
@@ -114,6 +126,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BloqueadosRoute: typeof BloqueadosRoute
+  RepresentantesRoute: typeof RepresentantesRoute
   RetirasRoute: typeof RetirasRoute
   RoteirizarRoute: typeof RoteirizarRoute
   SetupRoute: typeof SetupRoute
@@ -158,6 +171,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RetirasRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/representantes': {
+      id: '/representantes'
+      path: '/representantes'
+      fullPath: '/representantes'
+      preLoaderRoute: typeof RepresentantesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/bloqueados': {
       id: '/bloqueados'
       path: '/bloqueados'
@@ -178,6 +198,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BloqueadosRoute: BloqueadosRoute,
+  RepresentantesRoute: RepresentantesRoute,
   RetirasRoute: RetirasRoute,
   RoteirizarRoute: RoteirizarRoute,
   SetupRoute: SetupRoute,

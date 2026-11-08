@@ -9,6 +9,13 @@ export interface PedidoConsolidado {
   seq_solicitacao?: string;
   ja_programado_kg?: number;
   ja_programado_info?: string;
+  representante_codigo?: string;
+  data_referencia?: string;
+  dias_uteis_antecedencia?: number;
+  /** "", PENDENTE, LIBERADO, NAO_LIBERADO */
+  consulta_representante?: string;
+  consulta_obs?: string;
+  consulta_em?: string;
   cliente: string;
   cliente_codigo: string;
   peso_kg: number;
@@ -221,6 +228,22 @@ export interface MoverPedidoRequest {
 export interface DividirCargaRequest {
   id_carga: string;
   peso_kg: number;
+}
+
+export type ResultadoConsulta = "LIBERADO" | "NAO_LIBERADO" | "PENDENTE";
+
+export interface ConsultaRepresentanteRequest {
+  ids: string[];
+  resultado: ResultadoConsulta;
+  autorizado_por?: string;
+  obs?: string;
+}
+
+export interface ConsultaRepresentanteResponse {
+  ok: boolean;
+  atualizados: number;
+  message: string;
+  alocados: Record<string, string>;
 }
 
 export interface AjustarDivisaoRequest {

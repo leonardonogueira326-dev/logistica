@@ -5,6 +5,7 @@ import {
   confirmarValidacao,
   anteciparPedido,
   operarDivisao,
+  registrarConsultaRepresentante,
   getConsolidados,
   getRoteirizacao,
   ingestSession,
@@ -14,7 +15,7 @@ import {
   roteirizar,
   uploadSession,
 } from "@/lib/api-client";
-import type { AnteciparPedidoBody, ConsolidadoPatch, OperacaoDivisao, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
+import type { AnteciparPedidoBody, ConsolidadoPatch, ConsultaRepresentanteRequest, OperacaoDivisao, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
 import { COLUMN_BACKLOG } from "@/lib/logistica-types";
 import { optimisticMoveRoteirizacao } from "@/lib/optimistic-move";
 import { SESSION_KEY } from "@/lib/logistica-types";
@@ -111,6 +112,15 @@ export function useLogisticaSession(sessionId: string | null) {
     },
   });
 
+  const consultaMutation = useMutation({
+    mutationFn: ({ sid, body }: { sid: string; body: ConsultaRepresentanteRequest }) =>
+      registrarConsultaRepresentante(sid, body),
+    onSuccess: (_data, { sid }) => {
+      queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
+      queryClient.invalidateQueries({ queryKey: ["roteirizacao", sid] });
+    },
+  });
+
   const dividirMutation = useMutation({
     mutationFn: ({ sid, operacao }: { sid: string; operacao: OperacaoDivisao }) =>
       operarDivisao(sid, operacao),
@@ -166,6 +176,7 @@ export function useLogisticaSession(sessionId: string | null) {
     moverMutation,
     anteciparMutation,
     dividirMutation,
+    consultaMutation,
     segundaViagemMutation,
     patchConsolidadoDebounced,
   };
