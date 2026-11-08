@@ -129,6 +129,9 @@ class ItemRotaSchema(BaseModel):
     id_carga: str = ""
     id_item: str = ""
     of_ano: str = ""
+    parte: str = ""
+    peso_total_linha: float = 0.0
+    divisao_automatica: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     representante: str = ""
@@ -183,6 +186,23 @@ class MoverPedidoSchema(BaseModel):
     destino: str
     motivo: str = ""
     forcar: bool = False
+
+
+class DividirCargaSchema(BaseModel):
+    id_carga: str
+    peso_kg: float = Field(gt=0, description="Peso da nova parte; o restante fica na carga original.")
+
+
+class AjustarDivisaoSchema(BaseModel):
+    id_carga: str
+    peso_kg: float = Field(gt=0, description="Peso que ESTA parte deve ter.")
+    id_carga_contrapartida: str = Field(
+        "", description="Parte que absorve a diferença. Vazio = outra parte da mesma linha."
+    )
+
+
+class CargaRefSchema(BaseModel):
+    id_carga: str
 
 
 class MoverPedidoResponseSchema(BaseModel):

@@ -1,5 +1,7 @@
 import type {
   AnteciparPedidoBody,
+  DividirCargaRequest,
+  OperacaoDivisao,
   AnteciparPedidoResponse,
   ConfigResponse,
   ConfiguracaoOperacional,
@@ -196,6 +198,31 @@ export async function saveSetup(config: ConfiguracaoOperacional): Promise<SetupR
 export async function buscarHistorico(q: string, limite = 20): Promise<HistoricoResponse> {
   const params = new URLSearchParams({ q, limite: String(limite) });
   return request<HistoricoResponse>(`/historico?${params}`);
+}
+
+/** Dividir / ajustar / juntar / confirmar divisão de uma carga. */
+export async function operarDivisao(
+  sessionId: string,
+  operacao: OperacaoDivisao,
+): Promise<MoverPedidoResponse> {
+  const rota = operacao.op === "dividir" ? "dividir" : `dividir/${operacao.op}`;
+  return request<MoverPedidoResponse>(`/sessions/${sessionId}/${rota}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(operacao.body),
+  });
+}
+
+/** Divide uma carga por peso; a nova parte fica na mesma coluna. */
+export async function dividirCarga(
+  sessionId: string,
+  body: DividirCargaRequest,
+): Promise<MoverPedidoResponse> {
+  return request<MoverPedidoResponse>(`/sessions/${sessionId}/dividir`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 export async function anteciparPedido(

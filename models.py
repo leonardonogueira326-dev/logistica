@@ -155,6 +155,11 @@ class ItemRota:
     id_carga: str = ""
     id_item: str = ""
     of_ano: str = ""
+    # Quando uma linha é dividida entre caminhões: "1/2", "2/2"...
+    parte: str = ""
+    peso_total_linha: float = 0.0
+    # "SIM" enquanto a divisão feita pelo motor não foi conferida pelo operador
+    divisao_automatica: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     representante: str = ""

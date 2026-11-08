@@ -42,6 +42,7 @@ import {
   MOTIVOS_BACKLOG,
   TEO_ALERTA_MIN,
   idRetornoVeiculo,
+  type OperacaoDivisao,
   type Roteirizacao,
   type PedidoConsolidado,
 } from "@/lib/logistica-types";
@@ -54,11 +55,19 @@ type PendingMove = {
   forcar?: boolean;
 };
 
+type AcoesDivisao = {
+  dividir: (p: CardPedido) => void;
+  ajustar: (p: CardPedido) => void;
+  juntar: (p: CardPedido) => void;
+  confirmar: (p: CardPedido) => void;
+};
+
 export function RouteKanbanBoard({
   data,
   loading,
   onMove,
   onAntecipar,
+  onDivisao,
   onExportRomaneio,
   onHabilitarSegundaViagem,
   exportingCaminhaoId,
@@ -79,6 +88,7 @@ export function RouteKanbanBoard({
     motivo_adiantamento: string;
     representante_autorizou: string;
   }) => Promise<void>;
+  onDivisao?: (operacao: OperacaoDivisao) => Promise<void>;
   onExportRomaneio?: (caminhaoId: string) => Promise<void>;
   onHabilitarSegundaViagem?: (veiculoId: string) => Promise<void>;
   exportingCaminhaoId?: string | null;
@@ -96,6 +106,37 @@ export function RouteKanbanBoard({
   const [motivoAdiantamento, setMotivoAdiantamento] = useState("");
   const [repAutorizou, setRepAutorizou] = useState("");
   const [antecipando, setAntecipando] = useState(false);
+  const [dividirModal, setDividirModal] = useState<{
+    modo: "dividir" | "ajustar";
+    id: string;
+    idItem: string;
+    peso: number;
+    titulo: string;
+  } | null>(null);
+  const [pesoDividir, setPesoDividir] = useState("");
+  const [contrapartida, setContrapartida] = useState("");
+  const [erroDividir, setErroDividir] = useState("");
+  const [dividindo, setDividindo] = useState(false);
+
+  const tituloCard = (pedido: CardPedido) => {
+    const of = String((pedido as Record<string, string>).of_ano ?? "");
+    return `${String(pedido.cliente ?? "")} — ${String(pedido.numero_pedido ?? "")}${of ? ` OF ${of}` : ""}`;
+  };
+
+  const abrirDivisao = (pedido: CardPedido, modo: "dividir" | "ajustar") => {
+    const peso = Number(pedido.peso_kg ?? 0);
+    const raw = pedido as Record<string, string>;
+    setDividirModal({
+      modo,
+      id: getCardId(pedido),
+      idItem: String(raw.id_item || getCardId(pedido).split("@P")[0]),
+      peso,
+      titulo: tituloCard(pedido),
+    });
+    setPesoDividir(modo === "dividir" ? String(Math.round(peso / 2)) : String(peso));
+    setContrapartida("");
+    setErroDividir("");
+  };
 
   const jornadaMax = data.jornada_maxima_minutos || 600;
 
@@ -258,6 +299,68 @@ export function RouteKanbanBoard({
     void executeMove({ numeroPedido, origem, destino });
   };
 
+
+  const operar = async (operacao: OperacaoDivisao) => {
+    if (!onDivisao) return;
+    await onDivisao(operacao);
+  };
+
+  /** Todas as partes da mesma linha (pedido/item + OF), com a coluna onde estão. */
+  const partesDaLinha = (idItem: string) => {
+    const out: { id: string; peso: number; parte: string; coluna: string }[] = [];
+    for (const col of columns) {
+      for (const p of itemsByColumn[col.id] ?? []) {
+        const raw = p as Record<string, string>;
+        const pid = String(raw.id_item || getCardId(p).split("@P")[0]);
+        if (pid === idItem) {
+          out.push({ id: getCardId(p), peso: Number(p.peso_kg ?? 0), parte: String(raw.parte ?? ""), coluna: col.label });
+        }
+      }
+    }
+    return out;
+  };
+
+  const confirmarDivisao = async () => {
+    if (!dividirModal) return;
+    const valor = Number(pesoDividir);
+    const outras = partesDaLinha(dividirModal.idItem).filter((p) => p.id !== dividirModal.id);
+    const contra = outras.find((p) => p.id === contrapartida) ?? [...outras].sort((a, b) => b.peso - a.peso)[0];
+    const limite = dividirModal.modo === "dividir" ? dividirModal.peso : dividirModal.peso + (contra?.peso ?? 0);
+    const invalido =
+      dividirModal.modo === "dividir" ? !(valor > 0) || valor >= limite : !(valor > 0) || valor > limite;
+    if (invalido) {
+      setErroDividir(`Informe um peso entre 0 e ${limite.toLocaleString("pt-BR")} kg.`);
+      return;
+    }
+    setDividindo(true);
+    try {
+      await operar(
+        dividirModal.modo === "dividir"
+          ? { op: "dividir", body: { id_carga: dividirModal.id, peso_kg: valor } }
+          : {
+              op: "ajustar",
+              body: { id_carga: dividirModal.id, peso_kg: valor, id_carga_contrapartida: contra?.id ?? "" },
+            },
+      );
+      setDividirModal(null);
+    } catch (e) {
+      setErroDividir(e instanceof Error ? e.message : "Não foi possível concluir.");
+    } finally {
+      setDividindo(false);
+    }
+  };
+
+  const pendentesDivisao = useMemo(() => {
+    const ids = new Set<string>();
+    for (const items of Object.values(itemsByColumn)) {
+      for (const p of items) {
+        const raw = p as Record<string, string>;
+        if (raw.divisao_automatica === "SIM") ids.add(String(raw.id_item || getCardId(p)));
+      }
+    }
+    return ids.size;
+  }, [itemsByColumn]);
+
   const confirmarAntecipacao = async () => {
     if (!anteciparModal || !onAntecipar || !motivoAdiantamento.trim()) return;
     setAntecipando(true);
@@ -305,6 +408,17 @@ export function RouteKanbanBoard({
 
   return (
     <>
+      {pendentesDivisao > 0 && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
+          <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+          <span>
+            {pendentesDivisao === 1 ? "1 linha foi dividida" : `${pendentesDivisao} linhas foram divididas`}{" "}
+            automaticamente por excesso de peso. Confira cada uma: no menu do card use{" "}
+            <b>Ajustar divisão</b>, <b>Juntar partes</b> ou <b>Confirmar divisão</b>.
+          </span>
+        </div>
+      )}
+
       {warning && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
           <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -337,6 +451,17 @@ export function RouteKanbanBoard({
               }
               onOpenAudit={setAuditPedidoId}
               onAntecipar={col.variant === "futuro" ? setAnteciparModal : undefined}
+              onDivisao={
+                onDivisao
+                  ? {
+                      dividir: (p: CardPedido) => abrirDivisao(p, "dividir"),
+                      ajustar: (p: CardPedido) => abrirDivisao(p, "ajustar"),
+                      juntar: (p: CardPedido) => void operar({ op: "juntar", body: { id_carga: getCardId(p) } }),
+                      confirmar: (p: CardPedido) =>
+                        void operar({ op: "confirmar", body: { id_carga: getCardId(p) } }),
+                    }
+                  : undefined
+              }
               onExportRomaneio={col.rota ? onExportRomaneio : undefined}
               exportingRomaneio={exportingCaminhaoId === col.id}
               onHabilitarSegundaViagem={
@@ -403,6 +528,110 @@ export function RouteKanbanBoard({
               }
             >
               Confirmar
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!dividirModal} onOpenChange={(o) => !o && setDividirModal(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{dividirModal?.modo === "ajustar" ? "Ajustar divisão" : "Dividir carga"}</DialogTitle>
+          </DialogHeader>
+          {dividirModal && (() => {
+            const outras = partesDaLinha(dividirModal.idItem).filter((p) => p.id !== dividirModal.id);
+            const contra =
+              outras.find((p) => p.id === contrapartida) ?? [...outras].sort((a, b) => b.peso - a.peso)[0];
+            const valor = Number(pesoDividir);
+            const ajustar = dividirModal.modo === "ajustar";
+            const limite = ajustar ? dividirModal.peso + (contra?.peso ?? 0) : dividirModal.peso;
+            const restante = limite - valor;
+            const fmt = (n: number) => n.toLocaleString("pt-BR");
+            return (
+              <div className="space-y-3 text-sm">
+                <p className="text-muted-foreground">{dividirModal.titulo}</p>
+                {ajustar ? (
+                  <p>
+                    Esta carga tem <b>{fmt(dividirModal.peso)} kg</b>. Digite quanto ela deve levar; a diferença
+                    sai ou entra na outra parte.
+                  </p>
+                ) : (
+                  <p>
+                    Peso desta carga: <b>{fmt(dividirModal.peso)} kg</b>. A nova parte fica na mesma coluna —
+                    depois arraste para o outro caminhão.
+                  </p>
+                )}
+                <label className="block">
+                  <span className="text-xs text-muted-foreground">
+                    {ajustar ? "Peso nesta carga (kg)" : "Peso da nova parte (kg)"}
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    step="0.1"
+                    autoFocus
+                    className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 font-mono"
+                    value={pesoDividir}
+                    onChange={(e) => {
+                      setPesoDividir(e.target.value);
+                      setErroDividir("");
+                    }}
+                    onKeyDown={(e) => e.key === "Enter" && void confirmarDivisao()}
+                  />
+                </label>
+                {ajustar && outras.length > 1 && (
+                  <label className="block">
+                    <span className="text-xs text-muted-foreground">A diferença vai para</span>
+                    <select
+                      className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2"
+                      value={contra?.id ?? ""}
+                      onChange={(e) => setContrapartida(e.target.value)}
+                    >
+                      {outras.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          Parte {o.parte || "?"} · {o.coluna} · {fmt(o.peso)} kg
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {valor > 0 && restante >= 0 && (
+                  <div className="rounded-md bg-muted/50 px-3 py-2 text-xs space-y-0.5">
+                    {ajustar ? (
+                      <>
+                        <div>Esta carga: <b>{fmt(valor)} kg</b></div>
+                        <div>
+                          {contra ? `Parte ${contra.parte || "?"} (${contra.coluna})` : "Outra parte"}:{" "}
+                          <b>{fmt(restante)} kg</b>
+                          {restante === 0 && " — será juntada a esta"}
+                        </div>
+                      </>
+                    ) : (
+                      <div>
+                        Fica <b>{fmt(restante)} kg</b> + <b>{fmt(valor)} kg</b>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {erroDividir && <p className="text-xs text-destructive">{erroDividir}</p>}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <button
+              type="button"
+              className="px-4 py-2 text-sm rounded-md border"
+              onClick={() => setDividirModal(null)}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={dividindo}
+              className="px-4 py-2 text-sm rounded-md bg-accent text-accent-foreground disabled:opacity-50"
+              onClick={() => void confirmarDivisao()}
+            >
+              {dividindo ? "Salvando…" : dividirModal?.modo === "ajustar" ? "Ajustar" : "Dividir"}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -503,6 +732,7 @@ function KanbanColumn({
   onMoveTo,
   onOpenAudit,
   onAntecipar,
+  onDivisao,
   onExportRomaneio,
   exportingRomaneio,
   onHabilitarSegundaViagem,
@@ -523,6 +753,7 @@ function KanbanColumn({
   onMoveTo: (destino: string, pedido: CardPedido) => void;
   onOpenAudit: (numeroPedido: string) => void;
   onAntecipar?: (numeroPedido: string) => void;
+  onDivisao?: AcoesDivisao;
   onExportRomaneio?: (caminhaoId: string) => Promise<void>;
   exportingRomaneio?: boolean;
   onHabilitarSegundaViagem?: (veiculoId: string) => Promise<void>;
@@ -676,6 +907,16 @@ function KanbanColumn({
             onMoveTo={(dest) => onMoveTo(dest, pedido)}
             onOpenAudit={onOpenAudit}
             onAntecipar={onAntecipar}
+            onDivisao={
+              onDivisao
+                ? {
+                    dividir: () => onDivisao.dividir(pedido),
+                    ajustar: () => onDivisao.ajustar(pedido),
+                    juntar: () => onDivisao.juntar(pedido),
+                    confirmar: () => onDivisao.confirmar(pedido),
+                  }
+                : undefined
+            }
           />
         ))}
         {items.length === 0 && (

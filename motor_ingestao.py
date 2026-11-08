@@ -34,6 +34,7 @@ from models import (
     RetencaoFiscal,
 )
 from normalizador import (
+    formatar_kg,
     extrair_cidade_transportadora,
     normalizar_cliente,
     normalizar_codigo_cliente,
@@ -44,6 +45,12 @@ from normalizador import (
 from param_manager import carregar_parametros
 from quarentena import avaliar_quarentena
 from historico_manager import hash_pedido, linha_ja_arquivada, programado_anteriormente
+
+
+def _data_br(iso: str) -> str:
+    """2026-06-19 -> 19/06/2026 (mantém o texto se não for ISO)."""
+    partes = iso.split("-")
+    return f"{partes[2]}/{partes[1]}/{partes[0]}" if len(partes) == 3 else iso
 
 
 TIPO_FRETE_PARA_STATUS: dict[str, str] = {
@@ -353,7 +360,7 @@ class MotorIngestao:
                 ja_info = ""
                 if anteriores:
                     partes = [
-                        f"{float(r.get('peso_kg') or 0):,.0f} kg em {str(r.get('data_entrega', ''))[:10]}"
+                        f"{formatar_kg(float(r.get('peso_kg') or 0))} kg em {_data_br(str(r.get('data_entrega', ''))[:10])}"
                         + (f" (sol. {r['numero_solicitacao']})" if r.get("numero_solicitacao") else "")
                         for r in anteriores
                     ]

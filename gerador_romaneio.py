@@ -193,7 +193,9 @@ def _pedido_com_of(item: dict[str, Any]) -> str:
     """No romaneio, o pedido sai com a OF: o mesmo pedido/item pode ter várias."""
     numero = str(item.get("numero_pedido") or "")
     of = str(item.get("of_ano") or "")
-    return f"{numero} OF {of}" if of else numero
+    texto = f"{numero} OF {of}" if of else numero
+    parte = str(item.get("parte") or "")
+    return f"{texto} (parte {parte})" if parte else texto
 
 
 def _observacao_logistica(

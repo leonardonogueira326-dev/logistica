@@ -208,3 +208,9 @@ def mesma_linha(obj, chave: str) -> bool:
     if "#" in chave:
         return False
     return get("numero_pedido", "") == chave or get("numero_pedido_norm", "") == chave
+
+
+def formatar_kg(valor: float) -> str:
+    """1234.5 -> '1.234,5'; 3800.0 -> '3.800' (formato brasileiro)."""
+    texto = f"{float(valor or 0):,.1f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return texto[:-2] if texto.endswith(",0") else texto

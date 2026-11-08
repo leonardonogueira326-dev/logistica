@@ -9,6 +9,7 @@ import {
   useLogisticaSession,
 } from "@/hooks/useLogisticaSession";
 import { exportarRomaneio, exportarRomaneioCaminhao } from "@/lib/api-client";
+import type { OperacaoDivisao } from "@/lib/logistica-types";
 
 // Leaflet acessa `window` ao ser importado: o mapa só pode carregar no navegador.
 const MapaRoteirizacao = lazy(() =>
@@ -24,7 +25,7 @@ export const Route = createFileRoute("/roteirizar")({
 
 function RoteirizarPage() {
   const sessionId = getStoredSessionId();
-  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, moverMutation, anteciparMutation, segundaViagemMutation } =
+  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, moverMutation, anteciparMutation, segundaViagemMutation, dividirMutation } =
     useLogisticaSession(sessionId);
   const [lastWarning, setLastWarning] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -108,6 +109,12 @@ function RoteirizarPage() {
     }
   };
 
+  const handleDivisao = async (operacao: OperacaoDivisao) => {
+    if (!sessionId) return;
+    const resp = await dividirMutation.mutateAsync({ sid: sessionId, operacao });
+    setLastWarning(resp.warning ?? "");
+  };
+
   const handleAntecipar = async (payload: {
     numero_pedido: string;
     motivo_adiantamento: string;
@@ -186,8 +193,9 @@ function RoteirizarPage() {
           <TabsContent value="kanban" className="mt-4">
             <RouteKanbanBoard
               data={data}
-              loading={moverMutation.isPending || anteciparMutation.isPending}
+              loading={moverMutation.isPending || anteciparMutation.isPending || dividirMutation.isPending}
               onMove={handleMove}
+              onDivisao={handleDivisao}
               onAntecipar={handleAntecipar}
               onExportRomaneio={handleExportRomaneioCaminhao}
               exportingCaminhaoId={exportingCaminhaoId}
