@@ -22,6 +22,8 @@ from api.schemas import (  # noqa: E402
     ConsolidadoPatchSchema,
     ConsolidadosListSchema,
     IngestaoResponseSchema,
+    AjustarDivisaoSchema,
+    CargaRefSchema,
     DividirCargaSchema,
     MoverPedidoSchema,
     MoverPedidoResponseSchema,
@@ -534,6 +536,41 @@ def dividir_carga(session_id: str, body: DividirCargaSchema) -> MoverPedidoRespo
         warning=mensagem,
         roteirizacao=_roteirizacao_from_motor(motor, session_id),
     )
+
+
+def _operar_divisao(session_id: str, operacao) -> MoverPedidoResponseSchema:
+    data = store.load_roteirizacao(session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Roteirização não executada.")
+    motor = _motor_from_roteirizacao(data)
+    ok, mensagem = operacao(motor)
+    if not ok:
+        raise HTTPException(status_code=400, detail=mensagem)
+    store.save_roteirizacao(session_id, motor.para_dict())
+    return MoverPedidoResponseSchema(
+        ok=True, warning=mensagem, roteirizacao=_roteirizacao_from_motor(motor, session_id)
+    )
+
+
+@router.post("/{session_id}/dividir/ajustar", response_model=MoverPedidoResponseSchema)
+def ajustar_divisao(session_id: str, body: AjustarDivisaoSchema) -> MoverPedidoResponseSchema:
+    """Ajuste fino: esta parte fica com peso_kg; a diferença vai para a outra parte."""
+    return _operar_divisao(
+        session_id,
+        lambda m: m.ajustar_divisao(body.id_carga, body.peso_kg, body.id_carga_contrapartida),
+    )
+
+
+@router.post("/{session_id}/dividir/juntar", response_model=MoverPedidoResponseSchema)
+def juntar_partes(session_id: str, body: CargaRefSchema) -> MoverPedidoResponseSchema:
+    """Desfaz a divisão: todas as partes voltam para este card."""
+    return _operar_divisao(session_id, lambda m: m.juntar_partes(body.id_carga))
+
+
+@router.post("/{session_id}/dividir/confirmar", response_model=MoverPedidoResponseSchema)
+def confirmar_divisao(session_id: str, body: CargaRefSchema) -> MoverPedidoResponseSchema:
+    """Operador conferiu a divisão automática."""
+    return _operar_divisao(session_id, lambda m: m.confirmar_divisao(body.id_carga))
 
 
 @router.post("/{session_id}/antecipar", response_model=AnteciparPedidoResponseSchema)

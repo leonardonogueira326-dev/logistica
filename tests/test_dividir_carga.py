@@ -118,3 +118,89 @@ def test_dividir_peso_invalido_recusa():
     (_, id_carga, _, _), = _cargas(motor, "003060/26/001#005037/26")
     assert motor.dividir_carga(id_carga, 1000)[0] is False
     assert motor.dividir_carga(id_carga, 0)[0] is False
+
+
+# --- O operador decide: divisão automática é sugestão + ajuste fino -------------
+
+ID = "003060/26/001#005037/26"
+
+
+def _auto_10t():
+    motor = MotorLogistica()
+    peso = round(_cap_max(motor) * 1.6)
+    motor.alocar_frota([_linha(peso)])
+    return motor, peso
+
+
+def test_divisao_automatica_fica_pendente_de_conferencia():
+    motor, _ = _auto_10t()
+    flags = [
+        i.divisao_automatica
+        for itens in motor.itens_por_veiculo.values() for i in itens if i.id_item == ID
+    ] + [b.get("divisao_automatica") for b in motor.backlog if b.get("id_item") == ID]
+    assert flags and all(f == "SIM" for f in flags)
+
+
+def test_ajuste_fino_5322_kg_e_o_restante_vai_para_a_outra_parte():
+    motor, peso = _auto_10t()
+    p1 = next(c for c in _cargas(motor, ID) if c[3] == "1/2")
+
+    ok, msg = motor.ajustar_divisao(p1[1], 5322)
+    assert ok, msg
+    pesos = {c[1]: c[2] for c in _cargas(motor, ID)}
+    assert pesos[p1[1]] == 5322
+    assert abs(sum(pesos.values()) - peso) < 0.01
+    assert len(pesos) == 2
+    # ajustar = operador conferiu
+    assert not any(
+        i.divisao_automatica for itens in motor.itens_por_veiculo.values() for i in itens if i.id_item == ID
+    )
+
+
+def test_ajuste_que_zera_a_outra_parte_absorve_ela():
+    motor = MotorLogistica()
+    motor.alocar_frota([_linha(1000)])
+    (_, cid, _, _), = _cargas(motor, ID)
+    motor.dividir_carga(cid, 300)
+    grande = next(c for c in _cargas(motor, ID) if c[2] == 700)
+    ok, msg = motor.ajustar_divisao(grande[1], 1000)
+    assert ok, msg
+    assert [c[2] for c in _cargas(motor, ID)] == [1000]
+
+
+def test_ajuste_acima_do_total_e_recusado():
+    motor = MotorLogistica()
+    motor.alocar_frota([_linha(1000)])
+    (_, cid, _, _), = _cargas(motor, ID)
+    motor.dividir_carga(cid, 300)
+    p = _cargas(motor, ID)[0]
+    assert motor.ajustar_divisao(p[1], 1500)[0] is False
+
+
+def test_ajuste_avisa_quando_estoura_capacidade():
+    motor, peso = _auto_10t()
+    p1 = next(c for c in _cargas(motor, ID) if c[3] == "1/2")
+    cap = next(r.capacidade_kg for r in motor.rotas if r.veiculo_id == p1[0])
+    ok, msg = motor.ajustar_divisao(p1[1], min(cap + 500, peso - 1))
+    assert ok
+    assert "ATENÇÃO" in msg and "capacidade" in msg
+
+
+def test_juntar_partes_desfaz_a_divisao():
+    motor, peso = _auto_10t()
+    p1 = _cargas(motor, ID)[0]
+    ok, _ = motor.juntar_partes(p1[1])
+    assert ok
+    cargas = _cargas(motor, ID)
+    assert len(cargas) == 1
+    coluna, id_carga, peso_final, parte = cargas[0]
+    assert peso_final == peso and parte == "" and id_carga == ID
+
+
+def test_confirmar_divisao_limpa_o_aviso():
+    motor, _ = _auto_10t()
+    p1 = _cargas(motor, ID)[0]
+    assert motor.confirmar_divisao(p1[1])[0]
+    assert not any(
+        i.divisao_automatica for itens in motor.itens_por_veiculo.values() for i in itens if i.id_item == ID
+    )
