@@ -75,7 +75,7 @@ function RetirasPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {retiras.map((r) => (
-            <div key={r.numero_pedido} className="rounded-xl border border-border bg-card p-5 shadow-sm">
+            <div key={r.id_item || `${r.numero_pedido}-${r.of_ano ?? ""}`} className="rounded-xl border border-border bg-card p-5 shadow-sm">
               <div className="flex items-start gap-3">
                 <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
                   <Building2 className="w-5 h-5 text-accent" />

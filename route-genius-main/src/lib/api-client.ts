@@ -167,8 +167,12 @@ export async function roteirizar(sessionId: string): Promise<Roteirizacao> {
   return request<Roteirizacao>(`/sessions/${sessionId}/roteirizar`, { method: "POST" });
 }
 
-export async function getRoteirizacao(sessionId: string): Promise<Roteirizacao> {
-  return request<Roteirizacao>(`/sessions/${sessionId}/roteirizacao`);
+/** null = o quadro do dia ainda não foi montado (não é erro). */
+export async function getRoteirizacao(sessionId: string): Promise<Roteirizacao | null> {
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/roteirizacao`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json() as Promise<Roteirizacao>;
 }
 
 export async function habilitarSegundaViagem(

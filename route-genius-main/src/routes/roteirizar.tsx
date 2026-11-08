@@ -46,8 +46,9 @@ function RoteirizarPage() {
   }, [consolidadosQuery.data]);
 
   useEffect(() => {
-    if (!sessionId || roteirizacaoQuery.data || roteirizacaoQuery.isFetching) return;
-    if (roteirizacaoQuery.isError) {
+    if (!sessionId || roteirizacaoQuery.data || roteirizacaoQuery.isFetching || roteirizarMutation.isPending) return;
+    // Quadro ainda não montado (null) ou erro: monta pela primeira vez.
+    if (roteirizacaoQuery.data === null || roteirizacaoQuery.isError) {
       roteirizarMutation.mutate(sessionId);
     }
   }, [sessionId, roteirizacaoQuery.data, roteirizacaoQuery.isError, roteirizacaoQuery.isFetching, roteirizarMutation]);

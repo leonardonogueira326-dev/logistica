@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, useRouterState } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import {
@@ -9,7 +10,7 @@ import {
   AlertTriangle,
   PackageCheck,
   Radio,
-  Bell, PhoneCall } from "lucide-react";
+  PhoneCall } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HistoricoSearch } from "@/components/HistoricoSearch";
 
@@ -23,6 +24,32 @@ const navItems = [
   { to: "/bloqueados", label: "Bloqueados & Pendências", icon: AlertTriangle },
   { to: "/retiras", label: "Retiras (FOB)", icon: PackageCheck },
 ] as const;
+
+/** Status REAL da IA local (Ollama), consultado na API a cada minuto. */
+function StatusIA() {
+  const { data } = useQuery({
+    queryKey: ["ia-status"],
+    queryFn: async () => {
+      const r = await fetch("/api/ia/status");
+      return (await r.json()) as { online: boolean; modelo: string; mensagem: string };
+    },
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const online = !!data?.online;
+  return (
+    <div
+      title={data?.mensagem ?? "Verificando IA local…"}
+      className={cn(
+        "flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-medium",
+        online ? "bg-success/10 border-success/30 text-success" : "bg-muted border-border text-muted-foreground",
+      )}
+    >
+      <span className={cn("inline-flex rounded-full h-2 w-2", online ? "bg-success" : "bg-muted-foreground/50")} />
+      {data ? (online ? "IA local: ativa" : "IA local: desligada") : "IA local…"}
+    </div>
+  );
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -67,39 +94,22 @@ export function AppShell({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
-        <div className="px-4 py-4 border-t border-sidebar-border">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-xs font-bold">
-              RC
-            </div>
-            <div className="text-xs">
-              <div className="font-semibold">Rafael Coordenador</div>
-              <div className="text-sidebar-foreground/60">Logística · SF</div>
-            </div>
-          </div>
+        <div className="px-4 py-4 border-t border-sidebar-border text-xs">
+          <div className="font-semibold">Superfine Steel</div>
+          <div className="text-sidebar-foreground/60">Logística · expedição</div>
         </div>
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6">
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-success/10 border border-success/30">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
-              </span>
-              <span className="text-xs font-medium text-success">Motor IA: Online</span>
-            </div>
+            <StatusIA />
             <div className="text-xs text-muted-foreground hidden lg:block">
               Operação · {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" })}
             </div>
           </div>
           <div className="flex items-center gap-3">
             <HistoricoSearch />
-            <button className="relative p-2 rounded-md hover:bg-muted">
-              <Bell className="w-4 h-4" />
-              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-destructive" />
-            </button>
           </div>
         </header>
         <main className="flex-1 overflow-auto">{children}</main>
