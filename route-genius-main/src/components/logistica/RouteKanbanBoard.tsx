@@ -2,7 +2,10 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
+  pointerWithin,
+  rectIntersection,
   useDroppable,
+  type CollisionDetection,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -44,6 +47,7 @@ import {
   COLUMN_COLETAS,
   MOTIVOS_BACKLOG,
   TEO_ALERTA_MIN,
+  SUFIXO_VIAGEM_RETORNO,
   idRetornoVeiculo,
   type EquipeVeiculo,
   type OperacaoDivisao,
@@ -236,17 +240,6 @@ export function RouteKanbanBoard({
         icon: Truck,
         variant: "default",
       });
-      if (data.viagens_retorno_habilitadas?.includes(r.veiculo_id)) {
-        vehicleCols.push({
-          id: idRetornoVeiculo(r.veiculo_id),
-          label: `${r.veiculo_nome} - Retorno`,
-          rota: r,
-          icon: Truck,
-          variant: "retorno",
-          isRetorno: true,
-          veiculoBaseId: r.veiculo_id,
-        });
-      }
     }
 
     return [
@@ -270,7 +263,14 @@ export function RouteKanbanBoard({
     ];
   }, [data.rotas, data.viagens_retorno_habilitadas]);
 
-  const destinos = columns.map((c) => ({ id: c.id, label: c.label }));
+  // 2ª viagem fica dentro do card do caminhão, mas continua sendo um destino próprio.
+  const destinos = columns.flatMap((c) => {
+    const base = [{ id: c.id, label: c.label }];
+    if (c.rota && data.viagens_retorno_habilitadas?.includes(c.id)) {
+      base.push({ id: idRetornoVeiculo(c.id), label: `${c.label} · 2ª viagem` });
+    }
+    return base;
+  });
 
   const itemsByColumn = useMemo(() => {
     const map: Record<string, CardPedido[]> = {};
@@ -394,7 +394,7 @@ export function RouteKanbanBoard({
           destino,
           titulo: tituloCard(card),
           representante: rep,
-          destinoLabel: columns.find((c) => c.id === destino)?.label ?? destino,
+          destinoLabel: destinos.find((c) => c.id === destino)?.label ?? destino,
         });
         return;
       }
@@ -425,7 +425,7 @@ export function RouteKanbanBoard({
   /** Todas as partes da mesma linha (pedido/item + OF), com a coluna onde estão. */
   const partesDaLinha = (idItem: string) => {
     const out: { id: string; peso: number; parte: string; coluna: string }[] = [];
-    for (const col of columns) {
+    for (const col of destinos) {
       for (const p of itemsByColumn[col.id] ?? []) {
         const raw = p as Record<string, string>;
         const pid = String(raw.id_item || getCardId(p).split("@P")[0]);
@@ -516,7 +516,7 @@ export function RouteKanbanBoard({
     const origem = activeData.columnId;
 
     let destino = String(over.id);
-    if (destino.includes("::")) {
+    if (destino.includes("::") && !destino.endsWith(SUFIXO_VIAGEM_RETORNO)) {
       destino = destino.split("::")[0];
     }
 
@@ -563,7 +563,12 @@ export function RouteKanbanBoard({
         </div>
       )}
 
-      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={colisao}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
         <TooltipProvider delayDuration={200}>
         <div className="flex gap-4 overflow-x-auto pb-4 min-h-[480px]">
           {columns.map((col) => (
@@ -612,6 +617,11 @@ export function RouteKanbanBoard({
               metricasRetorno={data.metricas_retorno ?? {}}
               isRetorno={col.isRetorno}
               veiculoBaseId={col.veiculoBaseId}
+              itensRetorno={
+                col.rota && data.viagens_retorno_habilitadas?.includes(col.id)
+                  ? itemsByColumn[idRetornoVeiculo(col.id)] ?? []
+                  : undefined
+              }
             />
           ))}
         </div>
@@ -922,6 +932,7 @@ function KanbanColumn({
   metricasRetorno,
   isRetorno,
   veiculoBaseId,
+  itensRetorno,
   fechado,
   onToggleFechar,
   equipe,
@@ -948,6 +959,7 @@ function KanbanColumn({
   metricasRetorno?: Roteirizacao["metricas_retorno"];
   isRetorno?: boolean;
   veiculoBaseId?: string;
+  itensRetorno?: CardPedido[];
   fechado?: boolean;
   onToggleFechar?: () => void;
   equipe?: EquipeVeiculo;
@@ -1146,6 +1158,18 @@ function KanbanColumn({
           </div>
         )}
       </div>
+      {itensRetorno && rota && (
+        <SegundaViagem
+          veiculoId={id}
+          itens={itensRetorno}
+          metricas={metricasRetorno?.[id]}
+          destinos={destinos}
+          onMoveTo={onMoveTo}
+          onOpenAudit={onOpenAudit}
+          onDivisao={onDivisao}
+          onExportRomaneio={onExportRomaneio}
+        />
+      )}
     </div>
   );
 }
@@ -1196,6 +1220,99 @@ function GrupoRepresentante({ rep, linhas, dataRef }: { rep: string; linhas: Car
         </div>
       </div>
       <BotaoCopiar pequeno rotulo="Mensagem" texto={mensagemRepresentante(rep, paraMensagem, dataRef)} />
+    </div>
+  );
+}
+
+/** Prefere a área da 2ª viagem quando o ponteiro está sobre ela (fica dentro do card do caminhão). */
+const colisao: CollisionDetection = (args) => {
+  const sob = pointerWithin(args);
+  if (sob.length) {
+    const retorno = sob.find((c) => String(c.id).endsWith(SUFIXO_VIAGEM_RETORNO));
+    return retorno ? [retorno] : sob;
+  }
+  return rectIntersection(args);
+};
+
+/** 2ª viagem (tarde) dentro do mesmo card do caminhão, separada por uma faixa. */
+function SegundaViagem({
+  veiculoId,
+  itens,
+  metricas,
+  destinos,
+  onMoveTo,
+  onOpenAudit,
+  onDivisao,
+  onExportRomaneio,
+}: {
+  veiculoId: string;
+  itens: CardPedido[];
+  metricas?: NonNullable<Roteirizacao["metricas_retorno"]>[string];
+  destinos: { id: string; label: string }[];
+  onMoveTo: (destino: string, pedido: CardPedido) => void;
+  onOpenAudit: (numeroPedido: string) => void;
+  onDivisao?: AcoesDivisao;
+  onExportRomaneio?: (caminhaoId: string) => Promise<void>;
+}) {
+  const idRetorno = idRetornoVeiculo(veiculoId);
+  const { setNodeRef, isOver } = useDroppable({ id: idRetorno, data: { columnId: idRetorno } });
+  const peso = Number(metricas?.peso_alocado_kg ?? itens.reduce((s, p) => s + Number(p.peso_kg ?? 0), 0));
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "border-t-2 border-dashed border-success/50 bg-success/5 rounded-b-xl",
+        isOver && "ring-2 ring-success bg-success/10",
+      )}
+    >
+      <div className="flex items-center gap-2 px-3 py-2">
+        <Truck className="w-4 h-4 text-success" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold">2ª viagem · tarde</div>
+          <div className="text-[11px] text-muted-foreground">
+            {itens.length} {itens.length === 1 ? "pedido" : "pedidos"} · {peso.toLocaleString("pt-BR")} kg
+            {metricas?.teo_hhmm ? ` · TEO ${metricas.teo_hhmm}` : ""} · romaneio próprio
+          </div>
+        </div>
+        {onExportRomaneio && (
+          <button
+            type="button"
+            onClick={() => void onExportRomaneio(idRetorno)}
+            title="Exportar romaneio da 2ª viagem"
+            className="shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-md border bg-background text-muted-foreground hover:text-foreground"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+      <div className="p-2 pt-0 space-y-2 overflow-y-auto max-h-[400px]">
+        {itens.map((pedido) => (
+          <PedidoKanbanCard
+            key={`${idRetorno}::${getCardId(pedido)}`}
+            pedido={pedido}
+            columnId={idRetorno}
+            destinos={destinos}
+            variant="retorno"
+            onMoveTo={(dest) => onMoveTo(dest, pedido)}
+            onOpenAudit={onOpenAudit}
+            onDivisao={
+              onDivisao
+                ? {
+                    dividir: () => onDivisao.dividir(pedido),
+                    ajustar: () => onDivisao.ajustar(pedido),
+                    juntar: () => onDivisao.juntar(pedido),
+                    confirmar: () => onDivisao.confirmar(pedido),
+                  }
+                : undefined
+            }
+          />
+        ))}
+        {itens.length === 0 && (
+          <div className="text-xs text-center text-muted-foreground py-5 border border-dashed border-success/40 rounded-lg">
+            Arraste aqui os pedidos da 2ª viagem
+          </div>
+        )}
+      </div>
     </div>
   );
 }
