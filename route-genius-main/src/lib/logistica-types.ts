@@ -25,6 +25,8 @@ export interface PedidoConsolidado {
   /** Remessa / NF triangular: entrega física em outra empresa */
   entrega_em?: string;
   entrega_cliente_codigo?: string;
+  /** Veio de um dia anterior sem sair (data ISO do 1º dia pendente) */
+  pendente_desde?: string;
   /** Calculado pela API: CONSULTA_REPRESENTANTE, PAGAMENTO_ANTECIPADO, PESO_ZERADO */
   pendencias?: Pendencia[];
   motivo_parado?: string;
@@ -182,6 +184,8 @@ export interface ItemRota {
   /** Remessa / NF triangular: entrega física em outra empresa */
   entrega_em?: string;
   entrega_cliente_codigo?: string;
+  /** Veio de um dia anterior sem sair (data ISO do 1º dia pendente) */
+  pendente_desde?: string;
   data_producao?: string;
   /** "1/2", "2/2"... quando a linha foi dividida entre caminhões */
   parte?: string;
@@ -224,6 +228,8 @@ export interface RotaVeiculo {
 export interface Roteirizacao {
   /** Caminhões fechados pelo operador (a sugestão não mexe) */
   veiculos_fechados?: string[];
+  /** Caminhões que não saíram: a carga vai para a próxima rota */
+  veiculos_nao_sairam?: string[];
   /** Motorista/ajudante/placa por caminhão no dia (vai para o romaneio) */
   equipe_por_veiculo?: Record<string, EquipeVeiculo>;
   /** Resultado da última sugestão/montagem */

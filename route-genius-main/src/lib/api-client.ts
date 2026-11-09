@@ -91,6 +91,18 @@ export async function fecharVeiculo(
   );
 }
 
+/** Caminhão não saiu (motorista faltou / quebrou): a carga vai para a próxima rota. */
+export async function marcarNaoSaiu(
+  sessionId: string,
+  veiculoId: string,
+  naoSaiu: boolean,
+): Promise<MoverPedidoResponse> {
+  return request<MoverPedidoResponse>(
+    `/sessions/${sessionId}/veiculos/${encodeURIComponent(veiculoId)}/nao-saiu`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nao_saiu: naoSaiu }) },
+  );
+}
+
 /** Primeira vez monta o quadro; depois só sugere (não desfaz). recomecar=true refaz do zero. */
 export async function roteirizarQuadro(sessionId: string, recomecar = false): Promise<Roteirizacao> {
   return request<Roteirizacao>(`/sessions/${sessionId}/roteirizar${recomecar ? "?recomecar=true" : ""}`, {

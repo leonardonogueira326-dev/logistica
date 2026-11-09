@@ -29,6 +29,8 @@ class PedidoConsolidadoSchema(BaseModel):
     obs_recebimento: str = ""
     entrega_em: str = ""
     entrega_cliente_codigo: str = ""
+    # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
+    pendente_desde: str = ""
     # Calculadas na leitura (pendencias.py): o que segura a linha fora da rota
     pendencias: list[str] = Field(default_factory=list)
     motivo_parado: str = ""
@@ -123,6 +125,10 @@ class FecharVeiculoSchema(BaseModel):
     fechado: bool = True
 
 
+class NaoSaiuSchema(BaseModel):
+    nao_saiu: bool = True
+
+
 class UploadResponseSchema(BaseModel):
     session_id: str
     files_saved: list[str]
@@ -163,6 +169,8 @@ class ItemRotaSchema(BaseModel):
     obs_recebimento: str = ""
     entrega_em: str = ""
     entrega_cliente_codigo: str = ""
+    # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
+    pendente_desde: str = ""
     data_producao: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
@@ -208,6 +216,7 @@ class RoteirizacaoSchema(BaseModel):
     itens_retorno_por_veiculo: dict[str, list[ItemRotaSchema]] = Field(default_factory=dict)
     viagens_retorno_habilitadas: list[str] = Field(default_factory=list)
     veiculos_fechados: list[str] = Field(default_factory=list)
+    veiculos_nao_sairam: list[str] = Field(default_factory=list)
     # vid -> {motorista, ajudante, placa}
     equipe_por_veiculo: dict[str, dict[str, str]] = Field(default_factory=dict)
     mensagem: str = ""

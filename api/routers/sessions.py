@@ -31,6 +31,7 @@ from api.schemas import (  # noqa: E402
     DividirCargaSchema,
     EquipeVeiculoSchema,
     FecharVeiculoSchema,
+    NaoSaiuSchema,
     MoverPedidoSchema,
     MoverPedidoResponseSchema,
     PedidoConsolidadoSchema,
@@ -69,6 +70,7 @@ from gerador_romaneio import (  # noqa: E402
     nome_arquivo_romaneio_caminhao,
 )
 from historico_manager import arquivar_sessao, chave_linha_solicitacao  # noqa: E402
+from virada_do_dia import juntar_ao_quadro_novo, pendentes_do_quadro  # noqa: E402
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -224,6 +226,7 @@ def _motor_from_roteirizacao(data: dict[str, Any]) -> MotorLogistica:
     }
     motor.viagens_retorno_habilitadas = list(data.get("viagens_retorno_habilitadas", []))
     motor.veiculos_fechados = list(data.get("veiculos_fechados", []))
+    motor.veiculos_nao_sairam = list(data.get("veiculos_nao_sairam", []))
     motor.equipe_por_veiculo = dict(data.get("equipe_por_veiculo", {}))
     return motor
 
@@ -347,6 +350,8 @@ def ingest_session(
         store.save_ingestao(session_id, payload)
         store.update_meta(session_id, pdfs_ingeridos=[p.name for p in pdfs[:1]])
         avisos, erros, linhas_novas = motor.avisos, motor.erros, len(payload["consolidados"])
+        if not atual:
+            avisos = _trazer_do_dia_anterior(session_id, payload) + avisos
         # Outras listas que vieram juntas no mesmo upload entram em seguida.
         restantes = pdfs[1:]
     else:
@@ -371,6 +376,48 @@ def ingest_session(
         avisos=avisos,
         erros=erros,
     )
+
+
+def _quadro_anterior(session_id: str, data_ref: str) -> str:
+    """Quadro do dia mais recente ANTES desta data (o "ontem" deste quadro)."""
+    candidatos = [
+        q for q in store.listar_quadros(500)
+        if q["session_id"] != session_id and q.get("data_referencia") and q["data_referencia"] < data_ref
+    ]
+    if not candidatos:
+        return ""
+    candidatos.sort(key=lambda q: (q["data_referencia"], q.get("atualizado_em", "")), reverse=True)
+    return candidatos[0]["session_id"]
+
+
+def _trazer_do_dia_anterior(session_id: str, payload: dict[str, Any]) -> list[str]:
+    """Quadro novo: o que não saiu no dia anterior entra aqui com 'pendente desde'."""
+    consolidados = payload.get("consolidados", [])
+    data_ref = next((c.get("data_referencia") for c in consolidados if c.get("data_referencia")), "")
+    anterior = _quadro_anterior(session_id, data_ref) if data_ref else ""
+    if not anterior:
+        return []
+    try:
+        dados = (
+            store.load_consolidados_validados(anterior) if store.is_validated(anterior) else None
+        ) or store.load_ingestao(anterior) or {}
+        pendentes = pendentes_do_quadro(dados.get("consolidados", []), store.load_roteirizacao(anterior))
+    except Exception as exc:  # noqa: BLE001 — virada não pode impedir o dia novo
+        return [f"Não consegui trazer as pendências do dia anterior: {exc}"]
+    if not pendentes:
+        return []
+    feriados = carregar_parametros().get("feriados_extras", [])
+    juntos, trazidas, herdadas = juntar_ao_quadro_novo(consolidados, pendentes, data_ref, feriados)
+    payload["consolidados"] = juntos
+    payload.setdefault("resumo", {})["consolidados"] = str(len(juntos))
+    store.save_ingestao(session_id, payload)
+    store.update_meta(session_id, quadro_anterior=anterior)
+    partes = []
+    if trazidas:
+        partes.append(f"{trazidas} linha(s) que não saíram no dia anterior entraram neste quadro")
+    if herdadas:
+        partes.append(f"{herdadas} linha(s) do PDF novo já estavam pendentes antes")
+    return ["Virada do dia: " + "; ".join(partes) + "."]
 
 
 def _chave_linha(c: dict[str, Any]) -> str:
@@ -760,6 +807,12 @@ def definir_equipe(session_id: str, veiculo_id: str, body: EquipeVeiculoSchema) 
 def fechar_veiculo(session_id: str, veiculo_id: str, body: FecharVeiculoSchema) -> MoverPedidoResponseSchema:
     """Caminhão fechado: a sugestão automática não coloca nem tira nada dele."""
     return _operar_divisao(session_id, lambda m: m.fechar_veiculo(veiculo_id, body.fechado))
+
+
+@router.post("/{session_id}/veiculos/{veiculo_id}/nao-saiu", response_model=MoverPedidoResponseSchema)
+def marcar_nao_saiu(session_id: str, veiculo_id: str, body: NaoSaiuSchema) -> MoverPedidoResponseSchema:
+    """Motorista faltou / caminhão quebrou: a carga passa para o próximo dia."""
+    return _operar_divisao(session_id, lambda m: m.marcar_nao_saiu(veiculo_id, body.nao_saiu))
 
 
 @router.get("/{session_id}/roteirizacao", response_model=RoteirizacaoSchema)

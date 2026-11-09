@@ -138,6 +138,7 @@ export function RouteKanbanBoard({
   onAntecipar,
   onDivisao,
   onFecharVeiculo,
+  onNaoSaiu,
   onEquipe,
   onExportRomaneio,
   onHabilitarSegundaViagem,
@@ -163,6 +164,7 @@ export function RouteKanbanBoard({
   }) => Promise<void>;
   onDivisao?: (operacao: OperacaoDivisao) => Promise<void>;
   onFecharVeiculo?: (veiculoId: string, fechado: boolean) => Promise<void>;
+  onNaoSaiu?: (veiculoId: string, naoSaiu: boolean) => Promise<void>;
   onEquipe?: (veiculoId: string, equipe: EquipeVeiculo) => Promise<void>;
   onExportRomaneio?: (caminhaoId: string) => Promise<void>;
   onHabilitarSegundaViagem?: (veiculoId: string) => Promise<void>;
@@ -603,6 +605,12 @@ export function RouteKanbanBoard({
               fechado={!!col.rota && (data.veiculos_fechados ?? []).includes(col.id)}
               equipe={col.rota && !col.isRetorno ? data.equipe_por_veiculo?.[col.id] : undefined}
               onSalvarEquipe={col.rota && !col.isRetorno && onEquipe ? (e: EquipeVeiculo) => onEquipe(col.id, e) : undefined}
+              naoSaiu={!!col.rota && (data.veiculos_nao_sairam ?? []).includes(col.id)}
+              onToggleNaoSaiu={
+                col.rota && !col.isRetorno && onNaoSaiu
+                  ? () => void onNaoSaiu(col.id, !(data.veiculos_nao_sairam ?? []).includes(col.id))
+                  : undefined
+              }
               onToggleFechar={
                 col.rota && !col.isRetorno && onFecharVeiculo
                   ? () => void onFecharVeiculo(col.id, !(data.veiculos_fechados ?? []).includes(col.id))
@@ -935,6 +943,8 @@ function KanbanColumn({
   itensRetorno,
   fechado,
   onToggleFechar,
+  naoSaiu,
+  onToggleNaoSaiu,
   equipe,
   onSalvarEquipe,
 }: {
@@ -962,6 +972,8 @@ function KanbanColumn({
   itensRetorno?: CardPedido[];
   fechado?: boolean;
   onToggleFechar?: () => void;
+  naoSaiu?: boolean;
+  onToggleNaoSaiu?: () => void;
   equipe?: EquipeVeiculo;
   onSalvarEquipe?: (e: EquipeVeiculo) => Promise<void>;
 }) {
@@ -1055,8 +1067,28 @@ function KanbanColumn({
           )}
           <span className="text-xs text-muted-foreground shrink-0">{items.length}</span>
         </div>
-        {fechado && (
-          <div className="mt-1 text-[11px] font-medium text-amber-700">Fechado — a sugestão não mexe</div>
+        {naoSaiu ? (
+          <div className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+            <b>NÃO SAIU</b> — a carga vai para a próxima rota quando o próximo dia for aberto.
+            {onToggleNaoSaiu && (
+              <button type="button" className="ml-1 underline" onClick={onToggleNaoSaiu}>
+                desfazer
+              </button>
+            )}
+          </div>
+        ) : (
+          fechado && <div className="mt-1 text-[11px] font-medium text-amber-700">Fechado — a sugestão não mexe</div>
+        )}
+        {!naoSaiu && onToggleNaoSaiu && items.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm("Este caminhão não vai sair hoje? A carga volta para a próxima rota.")) onToggleNaoSaiu();
+            }}
+            className="mt-1 text-[11px] text-muted-foreground underline hover:text-destructive"
+          >
+            Caminhão não saiu?
+          </button>
         )}
         {onSalvarEquipe && <EquipeEditor equipe={equipe} onSalvar={onSalvarEquipe} />}
         {variant === "futuro" && (

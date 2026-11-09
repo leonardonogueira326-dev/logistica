@@ -36,7 +36,7 @@ import {
   palavraChaveParaAprendizado,
   rotuloSugestaoLlm,
 } from "@/lib/logistica-types";
-import { dataBR, kg, mensagemComercial } from "@/lib/mensagens";
+import { dataBR, kg, mensagemComercial, textoPendenteDesde } from "@/lib/mensagens";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/pendencias")({
@@ -447,6 +447,11 @@ function PedidoOf({ c }: { c: PedidoConsolidado }) {
     <span className="font-mono text-xs">
       {c.numero_pedido}
       {c.of_ano && <span className="block text-[10px] text-muted-foreground">OF {c.of_ano}</span>}
+      {c.pendente_desde && (
+        <span className="mt-0.5 block font-sans text-[10px] font-semibold text-rose-700">
+          {textoPendenteDesde(c.pendente_desde)}
+        </span>
+      )}
     </span>
   );
 }

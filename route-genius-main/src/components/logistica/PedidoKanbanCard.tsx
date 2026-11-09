@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { idCarga, type ItemRota } from "@/lib/logistica-types";
 import { cn } from "@/lib/utils";
+import { textoPendenteDesde } from "@/lib/mensagens";
 
 export type CardPedido = ItemRota | Record<string, string>;
 
@@ -113,6 +114,11 @@ export function PedidoKanbanCard({
             {bairro && cidade ? ", " : ""}
             {cidade}
           </div>
+          {raw.pendente_desde && (
+            <div className="mt-1 inline-flex items-center gap-1 rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-rose-700">
+              <Clock className="w-3 h-3" /> {textoPendenteDesde(raw.pendente_desde)}
+            </div>
+          )}
           {raw.entrega_em && (
             <div
               className="mt-1 flex items-start gap-1 rounded bg-violet-500/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-700"

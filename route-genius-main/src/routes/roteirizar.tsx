@@ -27,7 +27,7 @@ export const Route = createFileRoute("/roteirizar")({
 
 function RoteirizarPage() {
   const sessionId = getStoredSessionId();
-  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, recomecarMutation, fecharMutation, equipeMutation, moverMutation, anteciparMutation, segundaViagemMutation, dividirMutation } =
+  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, recomecarMutation, fecharMutation, naoSaiuMutation, equipeMutation, moverMutation, anteciparMutation, segundaViagemMutation, dividirMutation } =
     useLogisticaSession(sessionId);
   const queryClient = useQueryClient();
   const [lastWarning, setLastWarning] = useState("");
@@ -94,6 +94,12 @@ function RoteirizarPage() {
     } finally {
       setOtimizando(false);
     }
+  };
+
+  const handleNaoSaiu = async (veiculoId: string, naoSaiu: boolean) => {
+    if (!sessionId) return;
+    const r = await naoSaiuMutation.mutateAsync({ sid: sessionId, veiculoId, naoSaiu });
+    setLastWarning(r.warning ?? "");
   };
 
   const handleFecharVeiculo = async (veiculoId: string, fechado: boolean) => {
@@ -280,6 +286,7 @@ function RoteirizarPage() {
               onMove={handleMove}
               onDivisao={handleDivisao}
               onFecharVeiculo={handleFecharVeiculo}
+              onNaoSaiu={handleNaoSaiu}
               onEquipe={handleEquipe}
               onAntecipar={handleAntecipar}
               onExportRomaneio={handleExportRomaneioCaminhao}

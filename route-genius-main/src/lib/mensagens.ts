@@ -64,3 +64,10 @@ export async function copiarTexto(texto: string): Promise<boolean> {
     return ok;
   }
 }
+
+/** "Parado desde 17/06" */
+export function textoPendenteDesde(iso?: string): string {
+  if (!iso) return "";
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `Parado desde ${m[3]}/${m[2]}` : `Parado desde ${iso}`;
+}

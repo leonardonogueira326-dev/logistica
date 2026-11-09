@@ -78,6 +78,9 @@ class MotorLogistica:
         self.viagens_retorno_habilitadas: list[str] = []
         # Caminhões que o operador fechou: a sugestão automática não mexe neles.
         self.veiculos_fechados: list[str] = []
+        # Caminhão montado que não saiu (motorista faltou, quebrou): a carga
+        # volta para a próxima rota quando o dia seguinte for aberto.
+        self.veiculos_nao_sairam: list[str] = []
         # vid -> {motorista, ajudante, placa} (vai para o romaneio)
         self.equipe_por_veiculo: dict[str, dict[str, str]] = {}
         self._cache_mapa_corredor: dict[str, int] = {}
@@ -229,6 +232,7 @@ class MotorLogistica:
                         "obs_recebimento": getattr(c, "obs_recebimento", ""),
                         "entrega_em": getattr(c, "entrega_em", ""),
                         "entrega_cliente_codigo": getattr(c, "entrega_cliente_codigo", ""),
+                        "pendente_desde": getattr(c, "pendente_desde", ""),
                         "data_producao": c.data_producao,
                         "cliente": c.cliente,
                         "cliente_codigo": c.cliente_codigo,
@@ -265,6 +269,7 @@ class MotorLogistica:
                         "obs_recebimento": getattr(c, "obs_recebimento", ""),
                         "entrega_em": getattr(c, "entrega_em", ""),
                         "entrega_cliente_codigo": getattr(c, "entrega_cliente_codigo", ""),
+                        "pendente_desde": getattr(c, "pendente_desde", ""),
                         "data_producao": c.data_producao,
                         "cliente": c.cliente,
                         "cliente_codigo": c.cliente_codigo,
@@ -292,6 +297,7 @@ class MotorLogistica:
                     "obs_recebimento": getattr(c, "obs_recebimento", ""),
                     "entrega_em": getattr(c, "entrega_em", ""),
                     "entrega_cliente_codigo": getattr(c, "entrega_cliente_codigo", ""),
+                    "pendente_desde": getattr(c, "pendente_desde", ""),
                     "data_producao": c.data_producao,
                     "cliente": c.cliente,
                     "cliente_codigo": c.cliente_codigo,
@@ -370,6 +376,7 @@ class MotorLogistica:
                             "obs_recebimento": p.get("obs_recebimento", ""),
                             "entrega_em": p.get("entrega_em", ""),
                             "entrega_cliente_codigo": p.get("entrega_cliente_codigo", ""),
+                            "pendente_desde": p.get("pendente_desde", ""),
                             "data_producao": p.get("data_producao", ""),
                             "parte": str(p.get("parte", "")),
                             "divisao_automatica": str(p.get("divisao_automatica", "") or ""),
@@ -410,6 +417,18 @@ class MotorLogistica:
             if b.get("motivo") not in self.MOTIVOS_DO_SISTEMA:
                 ids.add(self._id_item_de(b))
         return ids
+
+    def marcar_nao_saiu(self, veiculo_id: str, nao_saiu: bool = True) -> tuple[bool, str]:
+        nome = next((r.veiculo_nome for r in self.rotas if r.veiculo_id == veiculo_id), veiculo_id)
+        if nao_saiu and veiculo_id not in self.veiculos_nao_sairam:
+            self.veiculos_nao_sairam.append(veiculo_id)
+            if veiculo_id not in self.veiculos_fechados:
+                self.veiculos_fechados.append(veiculo_id)
+        if not nao_saiu and veiculo_id in self.veiculos_nao_sairam:
+            self.veiculos_nao_sairam.remove(veiculo_id)
+        if nao_saiu:
+            return True, f"{nome} marcado como NÃO SAIU: a carga vai para a próxima rota."
+        return True, f"{nome} voltou a contar como saído."
 
     def fechar_veiculo(self, veiculo_id: str, fechado: bool = True) -> tuple[bool, str]:
         nome = next((r.veiculo_nome for r in self.rotas if r.veiculo_id == veiculo_id), veiculo_id)
@@ -515,6 +534,7 @@ class MotorLogistica:
                     "obs_recebimento": p.get("obs_recebimento", ""),
                     "entrega_em": p.get("entrega_em", ""),
                     "entrega_cliente_codigo": p.get("entrega_cliente_codigo", ""),
+                    "pendente_desde": p.get("pendente_desde", ""),
                     "data_producao": p.get("data_producao", ""),
                     "parte": str(p.get("parte", "")),
                     "divisao_automatica": str(p.get("divisao_automatica", "") or ""),
@@ -554,6 +574,7 @@ class MotorLogistica:
                     "obs_recebimento": p.get("obs_recebimento", ""),
                     "entrega_em": p.get("entrega_em", ""),
                     "entrega_cliente_codigo": p.get("entrega_cliente_codigo", ""),
+                    "pendente_desde": p.get("pendente_desde", ""),
                     "data_producao": p.get("data_producao", ""),
                     "parte": str(p.get("parte", "")),
                     "divisao_automatica": str(p.get("divisao_automatica", "") or ""),
@@ -1122,6 +1143,7 @@ class MotorLogistica:
             obs_recebimento=str(pedido.get("obs_recebimento", "") or ""),
             entrega_em=str(pedido.get("entrega_em", "") or ""),
             entrega_cliente_codigo=str(pedido.get("entrega_cliente_codigo", "") or ""),
+            pendente_desde=str(pedido.get("pendente_desde", "") or ""),
             data_producao=str(pedido.get("data_producao", "") or ""),
             peso_total_linha=_float(pedido.get("peso_total_linha")),
             cliente=pedido["cliente"],
@@ -1210,6 +1232,7 @@ class MotorLogistica:
             },
             "viagens_retorno_habilitadas": list(self.viagens_retorno_habilitadas),
             "veiculos_fechados": list(self.veiculos_fechados),
+            "veiculos_nao_sairam": list(self.veiculos_nao_sairam),
             "equipe_por_veiculo": dict(self.equipe_por_veiculo),
             "metricas_retorno": metricas_retorno,
         }
@@ -1422,6 +1445,7 @@ class MotorLogistica:
                     "obs_recebimento": pedido_dict.get("obs_recebimento", ""),
                     "entrega_em": pedido_dict.get("entrega_em", ""),
                     "entrega_cliente_codigo": pedido_dict.get("entrega_cliente_codigo", ""),
+                    "pendente_desde": pedido_dict.get("pendente_desde", ""),
                     "data_producao": pedido_dict.get("data_producao", ""),
                     "parte": str(pedido_dict.get("parte", "")),
                     "divisao_automatica": str(pedido_dict.get("divisao_automatica", "") or ""),
@@ -1444,6 +1468,7 @@ class MotorLogistica:
                     "obs_recebimento": pedido_dict.get("obs_recebimento", ""),
                     "entrega_em": pedido_dict.get("entrega_em", ""),
                     "entrega_cliente_codigo": pedido_dict.get("entrega_cliente_codigo", ""),
+                    "pendente_desde": pedido_dict.get("pendente_desde", ""),
                     "data_producao": pedido_dict.get("data_producao", ""),
                     "parte": str(pedido_dict.get("parte", "")),
                     "divisao_automatica": str(pedido_dict.get("divisao_automatica", "") or ""),
@@ -1473,6 +1498,7 @@ class MotorLogistica:
                     "obs_recebimento": pedido_dict.get("obs_recebimento", ""),
                     "entrega_em": pedido_dict.get("entrega_em", ""),
                     "entrega_cliente_codigo": pedido_dict.get("entrega_cliente_codigo", ""),
+                    "pendente_desde": pedido_dict.get("pendente_desde", ""),
                     "data_producao": pedido_dict.get("data_producao", ""),
                     "parte": str(pedido_dict.get("parte", "")),
                     "divisao_automatica": str(pedido_dict.get("divisao_automatica", "") or ""),
@@ -1502,6 +1528,7 @@ class MotorLogistica:
                     "obs_recebimento": pedido_dict.get("obs_recebimento", ""),
                     "entrega_em": pedido_dict.get("entrega_em", ""),
                     "entrega_cliente_codigo": pedido_dict.get("entrega_cliente_codigo", ""),
+                    "pendente_desde": pedido_dict.get("pendente_desde", ""),
                     "data_producao": pedido_dict.get("data_producao", ""),
                     "parte": str(pedido_dict.get("parte", "")),
                     "divisao_automatica": str(pedido_dict.get("divisao_automatica", "") or ""),
@@ -1649,6 +1676,7 @@ class MotorLogistica:
                 "obs_recebimento": pedido_dict.get("obs_recebimento", ""),
                 "entrega_em": pedido_dict.get("entrega_em", ""),
                 "entrega_cliente_codigo": pedido_dict.get("entrega_cliente_codigo", ""),
+                "pendente_desde": pedido_dict.get("pendente_desde", ""),
                 "data_producao": pedido_dict.get("data_producao", ""),
                 "parte": str(pedido_dict.get("parte", "")),
                 "divisao_automatica": str(pedido_dict.get("divisao_automatica", "") or ""),
@@ -1679,6 +1707,7 @@ class MotorLogistica:
             "obs_recebimento": entry.get("obs_recebimento", ""),
             "entrega_em": entry.get("entrega_em", ""),
             "entrega_cliente_codigo": entry.get("entrega_cliente_codigo", ""),
+            "pendente_desde": entry.get("pendente_desde", ""),
             "data_producao": entry.get("data_producao", ""),
             "parte": str(entry.get("parte", "")),
             "divisao_automatica": str(entry.get("divisao_automatica", "") or ""),

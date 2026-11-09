@@ -55,6 +55,8 @@ class PedidoFaturamento:
     erro_extracao: str = ""
     entrega_em: str = ""
     entrega_cliente_codigo: str = ""
+    # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
+    pendente_desde: str = ""
     latitude: Optional[float] = None
     longitude: Optional[float] = None
 
@@ -122,6 +124,8 @@ class PedidoConsolidado:
     # Remessa / NF triangular: entrega física em outra empresa
     entrega_em: str = ""
     entrega_cliente_codigo: str = ""
+    # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
+    pendente_desde: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     peso_kg: float = 0.0
@@ -183,6 +187,8 @@ class ItemRota:
     # Remessa / NF triangular: entrega física em outra empresa
     entrega_em: str = ""
     entrega_cliente_codigo: str = ""
+    # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
+    pendente_desde: str = ""
     data_producao: str = ""
     cliente: str = ""
     cliente_codigo: str = ""

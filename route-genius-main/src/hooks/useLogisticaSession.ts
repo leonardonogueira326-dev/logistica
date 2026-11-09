@@ -17,6 +17,7 @@ import {
   roteirizar,
   roteirizarQuadro,
   fecharVeiculo,
+  marcarNaoSaiu,
   definirEquipe,
   uploadSession,
 } from "@/lib/api-client";
@@ -101,6 +102,14 @@ export function useLogisticaSession(sessionId: string | null) {
   const fecharMutation = useMutation({
     mutationFn: ({ sid, veiculoId, fechado }: { sid: string; veiculoId: string; fechado: boolean }) =>
       fecharVeiculo(sid, veiculoId, fechado),
+    onSuccess: (data, { sid }) => {
+      queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
+    },
+  });
+
+  const naoSaiuMutation = useMutation({
+    mutationFn: ({ sid, veiculoId, naoSaiu }: { sid: string; veiculoId: string; naoSaiu: boolean }) =>
+      marcarNaoSaiu(sid, veiculoId, naoSaiu),
     onSuccess: (data, { sid }) => {
       queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
     },
@@ -225,6 +234,7 @@ export function useLogisticaSession(sessionId: string | null) {
     roteirizarMutation,
     recomecarMutation,
     fecharMutation,
+    naoSaiuMutation,
     equipeMutation,
     moverMutation,
     anteciparMutation,
