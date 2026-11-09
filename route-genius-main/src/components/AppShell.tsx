@@ -76,6 +76,13 @@ function QuadroDoDia() {
   });
   const atual = getStoredSessionId();
   useEffect(() => {
+    // Quadro guardado neste navegador não existe mais no servidor (ex.: sistema limpo)
+    if (atual && quadros && !quadros.some((x) => x.session_id === atual)) {
+      localStorage.removeItem("sf_logistica_session_id");
+      if (quadros.length) setStoredSessionId(quadros[0].session_id);
+      window.location.reload();
+      return;
+    }
     if (!atual && quadros && quadros.length) {
       setStoredSessionId(quadros[0].session_id);
       window.location.reload();
