@@ -67,7 +67,10 @@ function motivoLeitura(c: PedidoConsolidado): string {
     return `IA sugere: ${rotuloSugestaoLlm(c.sugestao_llm_status)}`;
   if (c.status === "BLOQUEIO FISCAL" || c.status === "TRAVADO COMERCIAL")
     return `${c.status}${c.motivo_bloqueio ? ` — ${c.motivo_bloqueio}` : ""}`;
-  if (c.enriquecido_mestre !== "SIM") return "Cliente não encontrado na base — confira cidade e CEP";
+  // Endereço só importa quando a logística entrega (retira / transportadora que coleta não)
+  const logisticaEntrega = c.status === "LIBERADO" || c.status === "ENTREGA_TERCEIRO_HUB";
+  if (logisticaEntrega && c.enriquecido_mestre !== "SIM" && c.enriquecido_mestre !== "HUB")
+    return "Cliente não encontrado na base — confira cidade e CEP";
   return "";
 }
 
