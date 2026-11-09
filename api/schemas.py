@@ -27,6 +27,8 @@ class PedidoConsolidadoSchema(BaseModel):
     liberacao_comercial_em: str = ""
     liberacao_comercial_obs: str = ""
     obs_recebimento: str = ""
+    entrega_em: str = ""
+    entrega_cliente_codigo: str = ""
     # Calculadas na leitura (pendencias.py): o que segura a linha fora da rota
     pendencias: list[str] = Field(default_factory=list)
     motivo_parado: str = ""
@@ -159,6 +161,8 @@ class ItemRotaSchema(BaseModel):
     peso_total_linha: float = 0.0
     divisao_automatica: str = ""
     obs_recebimento: str = ""
+    entrega_em: str = ""
+    entrega_cliente_codigo: str = ""
     data_producao: str = ""
     cliente: str = ""
     cliente_codigo: str = ""

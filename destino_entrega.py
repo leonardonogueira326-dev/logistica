@@ -1,0 +1,106 @@
+"""
+Entrega em outro endereço (remessa / NF triangular).
+
+Na observação do pedido aparece algo como:
+  "EMITIR NF TRIANGULAR E ENTREGAR NA EMPRESA FORT LAMINAÇÃO. NOME: ...
+   ENDEREÇO RUA LUIZ OMETTO, 205 - DISTR. INDL. I - SANTA BARBARA D'OESTE"
+
+O destino físico passa a ser essa empresa (o cliente do pedido continua o mesmo).
+1º procura a empresa na base de clientes (pelo nome); 2º usa o endereço escrito
+na observação. Sem nada disso, não mexe.
+"""
+from __future__ import annotations
+
+import re
+import unicodedata
+from typing import Any
+
+_STOP = {
+    "A", "O", "DA", "DE", "DO", "DAS", "DOS", "E", "EMPRESA", "CLIENTE", "LTDA", "ME", "EPP", "SA",
+    "S", "EIRELI", "INDUSTRIA", "COMERCIO", "IND", "COM",
+}
+
+_RE_ENTREGAR = re.compile(
+    r"ENTREGAR\s+(?:O\s+MATERIAL\s+)?(?:NA|NO|EM|PARA)\s+(?:A\s+|O\s+)?(?:EMPRESA\s+|CLIENTE\s+)?"
+    r"(?P<nome>[A-Z0-9&][A-Z0-9&.'\- ]{2,60}?)"
+    r"(?=\s*(?:\.|,|;|:|\s-\s|\sNOME\b|\sCNPJ\b|\sENDERECO\b|$))"
+)
+_RE_ENDERECO = re.compile(r"ENDERECO\s*:?\s*-?\s*(?P<end>.+?)\s*(?:$|\sCNPJ\b|\sI\.?E\.?\b|\sFONE\b|\sTEL\b)")
+_RE_TRIANGULAR = re.compile(r"\bTRIA?N?GULAR\b")
+
+
+def _plano(texto: str) -> str:
+    sem = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode()
+    return re.sub(r"\s+", " ", sem.upper()).strip()
+
+
+def _tokens(nome: str) -> list[str]:
+    return [t for t in re.findall(r"[A-Z0-9]+", _plano(nome)) if t not in _STOP and len(t) > 1]
+
+
+def _do_endereco(obs: str) -> dict[str, str]:
+    m = _RE_ENDERECO.search(obs)
+    if not m:
+        return {}
+    partes = [p.strip(" .,") for p in m.group("end").split(" - ") if p.strip(" .,")]
+    if len(partes) < 2:
+        return {}
+    return {
+        "endereco": partes[0],
+        "bairro": partes[1] if len(partes) >= 3 else "",
+        "cidade": partes[-1],
+    }
+
+
+def _na_base(nome: str, base: dict[str, dict[str, Any]] | None) -> dict[str, Any] | None:
+    chave = _tokens(nome)[:2]
+    if not chave or not base:
+        return None
+    achados = [
+        reg for reg in base.values()
+        if all(t in _tokens(str(reg.get("razao_social") or reg.get("nome") or "")) for t in chave)
+    ]
+    return achados[0] if len(achados) == 1 else None
+
+
+def detectar_entrega(observacao: str, base: dict[str, dict[str, Any]] | None = None) -> dict[str, str] | None:
+    """
+    Devolve {nome, cidade, bairro, cep, codigo, triangular, origem} ou None.
+    origem: "base" (achou a empresa na base de clientes) ou "observacao".
+    """
+    obs = _plano(observacao)
+    m = _RE_ENTREGAR.search(obs)
+    if not m:
+        return None
+    nome = m.group("nome").strip(" .-")
+    if not _tokens(nome):
+        return None
+    triangular = "SIM" if _RE_TRIANGULAR.search(obs) else "NAO"
+    reg = _na_base(nome, base)
+    if reg:
+        return {
+            "nome": nome,
+            "cidade": _plano(str(reg.get("cidade") or "")),
+            "bairro": _plano(str(reg.get("bairro") or "")),
+            "cep": str(reg.get("cep") or ""),
+            "codigo": str(reg.get("codigo") or ""),
+            "triangular": triangular,
+            "origem": "base",
+        }
+    end = _do_endereco(obs)
+    if end.get("cidade"):
+        return {
+            "nome": nome,
+            "cidade": end["cidade"],
+            "bairro": end.get("bairro", ""),
+            "cep": "",
+            "codigo": "",
+            "triangular": triangular,
+            "origem": "observacao",
+        }
+    return None
+
+
+def rotulo(destino: dict[str, str]) -> str:
+    tri = " · NF triangular" if destino.get("triangular") == "SIM" else ""
+    return f"{destino['nome']} — {destino['cidade']}{tri}"

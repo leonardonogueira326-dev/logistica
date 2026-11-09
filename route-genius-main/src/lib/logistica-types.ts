@@ -22,6 +22,9 @@ export interface PedidoConsolidado {
   liberacao_comercial_em?: string;
   liberacao_comercial_obs?: string;
   obs_recebimento?: string;
+  /** Remessa / NF triangular: entrega física em outra empresa */
+  entrega_em?: string;
+  entrega_cliente_codigo?: string;
   /** Calculado pela API: CONSULTA_REPRESENTANTE, PAGAMENTO_ANTECIPADO, PESO_ZERADO */
   pendencias?: Pendencia[];
   motivo_parado?: string;
@@ -176,6 +179,9 @@ export interface ItemRota {
   of_ano?: string;
   /** Horário/dia de recebimento do cliente ("SÓ ABRE AS 8:00") */
   obs_recebimento?: string;
+  /** Remessa / NF triangular: entrega física em outra empresa */
+  entrega_em?: string;
+  entrega_cliente_codigo?: string;
   data_producao?: string;
   /** "1/2", "2/2"... quando a linha foi dividida entre caminhões */
   parte?: string;

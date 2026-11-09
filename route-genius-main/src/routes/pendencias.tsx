@@ -583,6 +583,11 @@ function DetalheLinha({
                   {motivoLeitura(c)}
                 </div>
               )}
+              {c.entrega_em && (
+                <div className="rounded-md border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-sm text-violet-800">
+                  <b>Entregar em:</b> {c.entrega_em}
+                </div>
+              )}
               {(c.pendencias ?? []).length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {(c.pendencias ?? []).map((p) => (

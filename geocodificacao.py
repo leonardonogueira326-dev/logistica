@@ -166,6 +166,9 @@ def geocodificar_cliente(
 def chave_da_linha(linha: dict[str, Any], base: dict[str, dict[str, str]] | None = None) -> str:
     """Cliente (se a entrega é na cidade do cadastro) ou a cidade de destino do PDF."""
     base = enderecos_base() if base is None else base
+    entrega = normalizar_codigo_cliente(str(linha.get("entrega_cliente_codigo", "") or ""))
+    if entrega and entrega in base:  # remessa: empresa de entrega está na base
+        return chave_cliente(entrega)
     codigo = normalizar_codigo_cliente(str(linha.get("cliente_codigo", "")))
     destino = normalizar_texto(str(linha.get("cidade_destino") or linha.get("cidade") or "")).replace("'", " ")
     cadastro = base.get(codigo, {})

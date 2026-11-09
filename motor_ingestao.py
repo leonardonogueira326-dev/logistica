@@ -28,6 +28,7 @@ from extrator_pdf import (
     tipo_frete_padrao_superfine,
 )
 from memoria_operacional import consultar_memoria
+from destino_entrega import detectar_entrega, rotulo as rotulo_entrega
 from models import (
     EventoEmail,
     PedidoConsolidado,
@@ -189,6 +190,19 @@ class MotorIngestao:
 
         return self.consolidados
 
+    def _aplicar_entrega_em_outro_endereco(self, pedido: PedidoFaturamento) -> None:
+        """Remessa / NF triangular: o caminhão vai até a empresa indicada na observação."""
+        destino = detectar_entrega(pedido.observacao_comercial, self._lookup_clientes)
+        if not destino:
+            return
+        pedido.entrega_em = rotulo_entrega(destino)
+        pedido.entrega_cliente_codigo = destino.get("codigo", "")
+        pedido.cidade = pedido.cidade_destino = normalizar_texto(destino["cidade"])
+        pedido.bairro = pedido.bairro_destino = normalizar_texto(destino.get("bairro", ""))
+        pedido.cep = pedido.cep_destino = destino.get("cep", "")
+        pedido.latitude = pedido.longitude = None
+        self.avisos.append(f"{pedido.numero_pedido}: entregar em {pedido.entrega_em} (observação do pedido).")
+
     def enriquecer_cadastro_mestre(self, pedido: PedidoFaturamento) -> None:
         """
         Enriquece endereço via cadastro mestre (código numérico sem zeros à esquerda).
@@ -252,9 +266,13 @@ class MotorIngestao:
                         f"não encontrado no cadastro mestre."
                     )
 
+            if pedido.tipo_frete not in ("RETIRA_FOB", "ENTREGA_TERCEIRO"):
+                self._aplicar_entrega_em_outro_endereco(pedido)
+
             cidade_rota = pedido.cidade_destino or normalizar_texto(pedido.cidade)
             pedido.rota_logistica = resolver_rota_logistica(cidade_rota, self.params)
-            self._aplicar_cadastro_geolocalizado(pedido)
+            if not pedido.entrega_em:
+                self._aplicar_cadastro_geolocalizado(pedido)
         except Exception as exc:
             self.avisos.append(f"Enriquecimento {pedido.numero_pedido}: {exc}")
 
@@ -405,6 +423,8 @@ class MotorIngestao:
                     estado=pedido.estado_destino or pedido.estado,
                     bairro=pedido.bairro_destino or pedido.bairro,
                     cidade_destino=pedido.cidade_destino or normalizar_texto(pedido.cidade),
+                    entrega_em=pedido.entrega_em,
+                    entrega_cliente_codigo=pedido.entrega_cliente_codigo,
                     estado_destino=pedido.estado_destino or normalizar_texto(pedido.estado),
                     bairro_destino=pedido.bairro_destino or normalizar_texto(pedido.bairro),
                     cep=pedido.cep or pedido.cep_destino,
