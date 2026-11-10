@@ -47,6 +47,26 @@ function StatusIA() {
   );
 }
 
+/** Código na pasta foi atualizado mas o servidor antigo continua rodando. */
+function AvisoVersao() {
+  const { data } = useQuery({
+    queryKey: ["versao"],
+    queryFn: async () => {
+      const r = await fetch("/api/versao");
+      return (await r.json()) as { rodando: string; no_disco: string; desatualizado: boolean };
+    },
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  if (!data?.desatualizado) return null;
+  return (
+    <div className="border-b border-amber-500/40 bg-amber-500/15 px-6 py-2 text-sm text-amber-900">
+      <b>Tem uma versão nova do sistema.</b> Feche a janela preta e abra o <b>iniciar.bat</b> de novo (depois
+      Ctrl+F5) — até lá você está usando a versão antiga.
+    </div>
+  );
+}
+
 type Quadro = {
   session_id: string;
   data_referencia: string;
@@ -166,6 +186,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
+        <AvisoVersao />
         <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6">
           <div className="flex items-center gap-3">
             <StatusIA />

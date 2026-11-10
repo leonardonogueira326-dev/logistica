@@ -59,6 +59,39 @@ def ia_status() -> dict:
     return status_ia()
 
 
+def _commit_no_disco() -> str:
+    """Commit do código que está na pasta agora (lê .git sem precisar do git instalado)."""
+    git = PROJECT_ROOT / ".git"
+    try:
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+        if head.startswith("ref:"):
+            ref = head.split(" ", 1)[1].strip()
+            arquivo = git / ref
+            if arquivo.exists():
+                return arquivo.read_text(encoding="utf-8").strip()[:7]
+            for linha in (git / "packed-refs").read_text(encoding="utf-8").splitlines():
+                if linha.endswith(ref):
+                    return linha[:7]
+            return ""
+        return head[:7]
+    except OSError:
+        return ""
+
+
+_COMMIT_RODANDO = _commit_no_disco()
+
+
+@app.get("/api/versao", tags=["health"])
+def versao() -> dict:
+    """Se o código na pasta mudou depois que o servidor subiu, ele está desatualizado."""
+    no_disco = _commit_no_disco()
+    return {
+        "rodando": _COMMIT_RODANDO,
+        "no_disco": no_disco,
+        "desatualizado": bool(_COMMIT_RODANDO and no_disco and no_disco != _COMMIT_RODANDO),
+    }
+
+
 @app.get("/api/health", response_model=HealthSchema, tags=["health"])
 def health() -> HealthSchema:
     return HealthSchema()
