@@ -128,6 +128,8 @@ def extrair_cidade_transportadora(texto_transportadora: Optional[str]) -> str:
         if "," in texto:
             ultimo = texto.rsplit(",", 1)[-1].strip()
             ultimo = re.sub(r"\s*-\s*$", "", ultimo)
+            # "GUARULHOS - 07221-080 - (11)2487-7066" -> "GUARULHOS"
+            ultimo = re.split(r"\s*-\s*(?=[\d(])", ultimo)[0].strip()
             if ultimo and re.match(r"^[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ]", ultimo) and not re.match(
                 r"^\d", ultimo
             ):

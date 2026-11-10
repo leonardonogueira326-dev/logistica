@@ -5,6 +5,8 @@ Enriquece pedidos com cadastro mestre de clientes (Ref. 8).
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
@@ -240,7 +242,25 @@ class MotorIngestao:
                 )
                 return
 
-            if mestre and pedido.tipo_frete not in ("RETIRA_FOB", "ENTREGA_TERCEIRO"):
+            def _so_letras(t: str) -> str:
+                return re.sub(r"[^A-Z]", "", normalizar_texto(t or ""))
+
+            destino_pdf = pedido.cidade_destino
+            outro_destino = (
+                mestre is not None
+                and destino_pdf
+                and mestre.get("cidade")
+                and _so_letras(destino_pdf) != _so_letras(mestre["cidade"])
+            )
+            if mestre and outro_destino and pedido.tipo_frete not in ("RETIRA_FOB", "ENTREGA_TERCEIRO"):
+                # O pedido diz para onde vai: vale mais que o endereço do cadastro.
+                pedido.representante = mestre["representante"]
+                pedido.enriquecido_mestre = "NAO"
+                self.avisos.append(
+                    f"{pedido.numero_pedido}: destino do pedido ({destino_pdf}) diferente do cadastro "
+                    f"({mestre['cidade']}) — usei o do pedido."
+                )
+            elif mestre and pedido.tipo_frete not in ("RETIRA_FOB", "ENTREGA_TERCEIRO"):
                 pedido.bairro = mestre["bairro"]
                 pedido.bairro_destino = mestre["bairro"]
                 pedido.cidade = mestre["cidade"]

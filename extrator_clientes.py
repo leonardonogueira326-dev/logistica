@@ -314,13 +314,83 @@ def carregar_cadastro(pasta_dados: Path) -> dict[str, dict[str, str]]:
     return cadastro.lookup
 
 
+def _lookup_planilha_dados(path: Path) -> dict[str, dict[str, str]]:
+    """
+    base-de-clientes.xlsx (aba Dados, exportada pelo sistema da empresa):
+    CODIGO, RAZAO_SOCIAL, NOME_FANTASIA, CIDADE, UF, CODIGO_REPRESENTANTE, REPRESENTANTE_*.
+    Não tem endereço/CEP, mas é a mais atualizada (clientes novos).
+    """
+    try:
+        df = pd.read_excel(path, sheet_name="Dados", dtype=str)
+    except Exception:
+        return {}
+    cols = {c.strip().upper(): c for c in df.columns}
+    if "CODIGO" not in cols or "CIDADE" not in cols:
+        return {}
+    pega = lambda row, nome: str(row.get(cols.get(nome, ""), "") or "").strip()  # noqa: E731
+    lookup: dict[str, dict[str, str]] = {}
+    for _, row in df.iterrows():
+        chave = normalizar_codigo_cliente(pega(row, "CODIGO"))
+        if not chave:
+            continue
+        rep = normalizar_texto(pega(row, "REPRESENTANTE_FANTASIA") or pega(row, "REPRESENTANTE_RAZAO"))
+        lookup[chave] = {
+            "codigo": chave,
+            "razao_social": normalizar_texto(pega(row, "RAZAO_SOCIAL")),
+            "nome_fantasia": normalizar_texto(pega(row, "NOME_FANTASIA")),
+            "endereco": "",
+            "bairro": "",
+            "cidade": normalizar_texto(pega(row, "CIDADE")),
+            "estado": normalizar_texto(pega(row, "UF")),
+            "cep": "",
+            "representante_codigo": pega(row, "CODIGO_REPRESENTANTE"),
+            "representante_nome": rep,
+            "representante": rep,
+            "aceita_antecipacao": "SIM",
+            "latitude": "",
+            "longitude": "",
+        }
+    return lookup
+
+
+def _bases_da_raiz() -> list[Path]:
+    raiz = Path(__file__).resolve().parent
+    return [raiz / n for n in config.ARQUIVO_BASE_CLIENTES_XLSX_FALLBACKS if (raiz / n).exists()]
+
+
 def obter_lookup_clientes(pasta: str) -> dict[str, dict[str, str]]:
-    """Retorna lookup cacheado (carrega uma vez por pasta)."""
+    """
+    Lookup código -> dados do cliente, juntando tudo que existir:
+    1) cadastro configurado (se o arquivo existir);
+    2) base-de-clientes1.xlsx (Planilha1: endereço, bairro, CEP);
+    3) base-de-clientes.xlsx (Dados: a mais atualizada, só cidade/UF/representante).
+    Um campo vazio numa fonte é completado pela seguinte.
+    """
     path = resolver_arquivo_cadastro(pasta)
-    chave = str(path.resolve()) if path else str(Path(pasta).resolve()) if pasta else ""
-    if chave not in _cache_lookup:
-        _cache_lookup[chave] = carregar_cadastro(Path(pasta) if pasta else Path("."))
-    return _cache_lookup[chave]
+    bases = _bases_da_raiz()
+    chave = "|".join(
+        f"{p.resolve()}:{p.stat().st_mtime_ns}" for p in ([path] if path else []) + bases
+    ) or (str(Path(pasta).resolve()) if pasta else "")
+    if chave in _cache_lookup:
+        return _cache_lookup[chave]
+
+    fontes: list[dict[str, dict[str, str]]] = []
+    if path:
+        fontes.append(carregar_cadastro(Path(pasta) if pasta else Path(".")))
+    for base in bases:
+        cad = CadastroClientes(str(base))
+        cad.carregar(str(base))
+        fontes.append(cad.lookup or _lookup_planilha_dados(base))
+
+    lookup: dict[str, dict[str, str]] = {}
+    for fonte in fontes:
+        for codigo, dados in fonte.items():
+            atual = lookup.setdefault(codigo, dict(dados))
+            for campo, valor in dados.items():
+                if valor and not atual.get(campo):
+                    atual[campo] = valor
+    _cache_lookup[chave] = lookup
+    return lookup
 
 
 def obter_cadastro_clientes(pasta_ou_caminho: str) -> CadastroClientes:
