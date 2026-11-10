@@ -31,6 +31,8 @@ class PedidoConsolidadoSchema(BaseModel):
     aprendizado_aplicado: str = "NAO"
     frete_conferido: str = ""
     frete_conferido_em: str = ""
+    conferida: str = ""
+    conferida_em: str = ""
     # Calculado na leitura: por que virou retira/coleta e se é caso de risco
     evidencia_frete: str = ""
     evidencia_nivel: str = ""

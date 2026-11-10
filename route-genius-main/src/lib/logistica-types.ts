@@ -25,6 +25,9 @@ export interface PedidoConsolidado {
   transportadora_codigo?: string;
   frete_conferido?: string;
   frete_conferido_em?: string;
+  /** Conferência linha a linha: só linha conferida vai para o Kanban */
+  conferida?: string;
+  conferida_em?: string;
   /** Por que virou retira/coleta (calculado no servidor) */
   evidencia_frete?: string;
   evidencia_nivel?: "VERDE" | "VERMELHO" | "";

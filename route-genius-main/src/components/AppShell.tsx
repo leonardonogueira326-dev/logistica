@@ -17,7 +17,7 @@ const navItems = [
   { to: "/", label: "Resumo Executivo", icon: LayoutDashboard },
   { to: "/setup", label: "Mesa de Comando", icon: Settings2 },
   { to: "/upload", label: "Upload & Processamento", icon: Upload },
-  { to: "/pendencias", label: "Pendências", icon: ClipboardCheck },
+  { to: "/pendencias", label: "Conferência", icon: ClipboardCheck },
   { to: "/roteirizar", label: "Roteirizar", icon: TruckIcon },
 ] as const;
 

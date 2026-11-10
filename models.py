@@ -125,6 +125,9 @@ class PedidoConsolidado:
     aprendizado_aplicado: str = "NAO"
     frete_conferido: str = ""
     frete_conferido_em: str = ""
+    # Conferência linha a linha: só linha conferida vai para o Kanban
+    conferida: str = ""
+    conferida_em: str = ""
     # Horário/dia de recebimento do cliente tirado da observação ("SÓ ABRE AS 8:00")
     obs_recebimento: str = ""
     # Remessa / NF triangular: entrega física em outra empresa

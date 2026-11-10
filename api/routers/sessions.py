@@ -395,6 +395,16 @@ def ingest_session(
     )
 
 
+def _ids_no_quadro(rote: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    grupos = [*rote.get("itens_por_veiculo", {}).values(), *rote.get("itens_retorno_por_veiculo", {}).values()]
+    grupos += [rote.get(k, []) for k in ("backlog", "backlog_futuro", "backlog_local", "coletas")]
+    for itens in grupos:
+        for it in itens:
+            ids.add(str(it.get("id_item") or it.get("numero_pedido") or "").split("@")[0])
+    return ids
+
+
 def _quadro_anterior(session_id: str, data_ref: str) -> str:
     """Quadro do dia mais recente ANTES desta data (o "ontem" deste quadro)."""
     candidatos = [
@@ -480,11 +490,9 @@ def _adicionar_lista_ao_quadro(
         except Exception:  # noqa: BLE001
             pass
 
-    rote = store.load_roteirizacao(session_id)
-    if novas and rote:
-        quadro = _motor_from_roteirizacao(rote)
-        quadro.incluir_linhas_novas([_dict_to_consolidado(c) for c in novas])
-        store.save_roteirizacao(session_id, quadro.para_dict())
+    # Linhas novas esperam a conferência: entram no quadro quando o operador der o ✓.
+    if novas:
+        aviso += " Confira as linhas novas para elas irem para o Kanban."
     return len(novas), [aviso, *motor.avisos], motor.erros
 
 
@@ -597,6 +605,13 @@ def confirmar_validacao(
     if not ingest:
         raise HTTPException(status_code=404, detail="Ingestão não executada.")
 
+    faltam = [c for c in ingest.get("consolidados", []) if c.get("conferida") != "SIM"]
+    if faltam and not store.is_validated(session_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Faltam {len(faltam)} linha(s) para conferir antes de montar as cargas.",
+        )
+
     regras_salvas = 0
     memoria_salva = 0
     if body and body.regras_novas:
@@ -676,9 +691,10 @@ def roteirizar(session_id: str, recomecar: bool = False) -> RoteirizacaoSchema:
         # Nada vai para os caminhões sem o operador conferir a lista.
         raise HTTPException(
             status_code=409,
-            detail="A leitura ainda não foi conferida. Confira em Pendências e clique em 'Confirmar leitura e montar cargas'.",
+            detail="A leitura ainda não foi conferida. Confira a lista em Conferência e clique em 'Montar cargas'.",
         )
 
+    consolidados = [c for c in consolidados if c.conferida == "SIM"]
     existente = store.load_roteirizacao(session_id)
     if existente and not recomecar:
         motor = _motor_from_roteirizacao(existente)
@@ -1100,9 +1116,14 @@ def registrar_consulta_representante(
     )
 
 
+@router.post("/{session_id}/conferir", response_model=ConsultaRepresentanteResponseSchema)
 @router.post("/{session_id}/conferir-frete", response_model=ConsultaRepresentanteResponseSchema)
 def conferir_frete(session_id: str, body: ConferirFreteBodySchema) -> ConsultaRepresentanteResponseSchema:
-    """Retira / coleta: o operador confere que a leitura está certa (ou desfaz)."""
+    """
+    Conferência linha a linha: o operador confere a linha (ou desfaz).
+    Só linha conferida vai para o Kanban. Se o quadro já está montado, a linha
+    conferida agora entra nele (fila / parados), sem mexer no resto.
+    """
     try:
         store.session_path(session_id)
     except SessionNotFoundError:
@@ -1110,17 +1131,30 @@ def conferir_frete(session_id: str, body: ConferirFreteBodySchema) -> ConsultaRe
     _, consolidados, _ = _get_active_consolidados(session_id)
     agora = datetime.now(timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
     memoria = carregar_memoria_frete()
-    tocadas, vermelhas = 0, []
+    tocadas, vermelhas, entram = 0, [], []
     for id_linha in body.ids:
         ref = next((c for c in consolidados if mesma_linha(c, id_linha)), None)
         if not ref:
             continue
         if body.conferido and evidencia_frete(ref, memoria)[1] == "VERMELHO":
             vermelhas.append(ref)
-        patch = {"frete_conferido": "SIM" if body.conferido else "", "frete_conferido_em": agora if body.conferido else ""}
+        marca = "SIM" if body.conferido else ""
+        quando = agora if body.conferido else ""
+        patch = {"conferida": marca, "conferida_em": quando, "frete_conferido": marca, "frete_conferido_em": quando}
         if _patch_consolidado_session(session_id, ref.id_item or id_linha, patch):
             tocadas += 1
+            if body.conferido and ref.conferida != "SIM":
+                ref.conferida = "SIM"
+                entram.append(ref)
     aprendidas = lembrar_conferencia_frete(vermelhas) if vermelhas else 0
+    rote = store.load_roteirizacao(session_id)
+    if entram and rote and store.is_validated(session_id):
+        no_quadro = _ids_no_quadro(rote)
+        novas = [c for c in entram if (c.id_item or c.numero_pedido) not in no_quadro]
+        if novas:
+            quadro = _motor_from_roteirizacao(rote)
+            quadro.incluir_linhas_novas(novas)
+            store.save_roteirizacao(session_id, quadro.para_dict())
     msg = f"{tocadas} linha(s) {'conferida(s)' if body.conferido else 'voltaram para conferir'}."
     if aprendidas:
         msg += f" Aprendi {aprendidas} combinação(ões) cliente + transportadora."
