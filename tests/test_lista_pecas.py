@@ -15,7 +15,8 @@ def test_peso_da_peca_na_descricao():
 
 def test_levar_na_transp_abreviado():
     for obs in ("LEVAR NA TRANSP", "LEVAR NA TRANSPORTADORA", "ENTREGAR NA TRANSP.", "DEIXAR NA TRANSPORTADORA",
-                "SUPERFINE LEVA ATÉ TRANSPORTADORA", "LEVA ATE A TRANSPORTADORA"):
+                "SUPERFINE LEVA ATÉ TRANSPORTADORA", "LEVA ATE A TRANSPORTADORA",
+                "LOGISTICA - ENTREGAR ATÉ 06/11/26 CONFORME COMBINADO COM O CLIENTE NA TRANSPORTADORA"):
         assert REGEX_HUB_REDESPACHO.search(obs), obs
 
 

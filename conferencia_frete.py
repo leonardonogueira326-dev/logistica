@@ -84,6 +84,8 @@ def evidencia(c: Any, memoria: dict[str, dict[str, str]] | None = None) -> tuple
         return "Transportadora do PDF é o próprio cliente retirando", "VERDE"
     if _get(c, "aprendizado_aplicado") == "SIM":
         return "Regra aprendida (você já corrigiu esse caso antes)", "VERDE"
+    if _get(c, "sugestao_llm_status") and "LLM" in _get(c, "auditoria").upper():
+        return "A IA local leu a observação e decidiu sozinha — confira com atenção", "VERMELHO"
     lembrado = (memoria if memoria is not None else carregar_memoria()).get(_chave(c))
     if lembrado:
         return f"Já conferido antes ({lembrado.get('em', '')}): esse cliente com essa transportadora", "VERDE"

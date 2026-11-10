@@ -109,7 +109,10 @@ REGEX_RETIRA_FOB = re.compile(
 )
 
 REGEX_HUB_REDESPACHO = re.compile(
-    r"(?:LEVAR?|ENTREGAR?|DEIXAR?)\s+(?:NA|NO|PARA\s+A|AT[EÉ](?:\s+A)?)\s+TRANSP\w*|REDESPACHO",
+    r"(?:LEVAR?|ENTREGAR?|DEIXAR?)\s+(?:NA|NO|PARA\s+A|AT[EÉ](?:\s+A)?)\s+TRANSP\w*"
+    # "ENTREGAR ATÉ 06/11/26 CONFORME COMBINADO COM O CLIENTE NA TRANSPORTADORA" (mesma frase)
+    r"|(?:LEVAR?|ENTREGAR?|DEIXAR?)\b[^-]{0,90}?\bNA\s+TRANSPORTADORA"
+    r"|REDESPACHO",
     re.IGNORECASE,
 )
 
@@ -158,7 +161,10 @@ def tem_palavras_chave_logisticas(
 ) -> bool:
     """Indica se há palavras-chave logísticas explícitas no texto."""
     texto = f"{normalizar_texto(texto_observacao)} {normalizar_texto(texto_descricao)}"
-    return bool(texto.strip() and REGEX_PALAVRAS_CHAVE_LOGISTICA.search(texto))
+    return bool(
+        texto.strip()
+        and (REGEX_PALAVRAS_CHAVE_LOGISTICA.search(texto) or REGEX_HUB_REDESPACHO.search(texto))
+    )
 
 
 def observacao_apenas_administrativa(

@@ -52,13 +52,14 @@ def _do_endereco(obs: str) -> dict[str, str]:
     }
 
 
-def _na_base(nome: str, base: dict[str, dict[str, Any]] | None) -> dict[str, Any] | None:
-    chave = _tokens(nome)[:2]
+def _na_base(nome: str, base: dict[str, dict[str, Any]] | None, todos: bool = False) -> dict[str, Any] | None:
+    chave = _tokens(nome) if todos else _tokens(nome)[:2]
     if not chave or not base:
         return None
     achados = [
         reg for reg in base.values()
         if all(t in _tokens(str(reg.get("razao_social") or reg.get("nome") or "")) for t in chave)
+        or (len(chave) == 1 and chave[0] == _plano(str(reg.get("nome_fantasia") or "")))
     ]
     return achados[0] if len(achados) == 1 else None
 
@@ -104,3 +105,59 @@ def detectar_entrega(observacao: str, base: dict[str, dict[str, Any]] | None = N
 def rotulo(destino: dict[str, str]) -> str:
     tri = " · NF triangular" if destino.get("triangular") == "SIM" else ""
     return f"{destino['nome']} — {destino['cidade']}{tri}"
+
+
+# --------------------------------------------------------------- remessa por item
+# "ITEM 1 a 4 e 6 a 9 remessa LAP para mao de obra ... - ITEM 5 remessa FORT para ..."
+_RE_REMESSA_ITEM = re.compile(
+    r"\bITE(?:M|NS)\s+(?P<itens>\d+(?:\s*(?:A|ATE|-|,|E)\s*\d+)*)\s+(?:SAO\s+|E\s+)?REMESSA\s+"
+    r"(?:PARA\s+(?:A\s+)?)?(?P<nome>[A-Z0-9&][A-Z0-9&.]*(?:\s+(?!PARA\b|P/|DE\b|MAO\b)[A-Z0-9&][A-Z0-9&.]*){0,2})"
+)
+# Apelidos usados na observação -> como a empresa está na base de clientes
+APELIDOS_REMESSA = {"FORT": "FORT LAMINACAO", "LAP": "LAMINACAO ACOS PAULINIA"}
+
+
+def _itens(expr: str) -> set[int]:
+    out: set[int] = set()
+    for parte in re.split(r"\s*(?:,|\bE\b)\s*", expr):
+        m = re.match(r"(\d+)\s*(?:A|ATE|-)\s*(\d+)$", parte.strip())
+        if m:
+            a, b = int(m.group(1)), int(m.group(2))
+            out.update(range(min(a, b), max(a, b) + 1))
+        elif parte.strip().isdigit():
+            out.add(int(parte.strip()))
+    return out
+
+
+def detectar_remessa_por_item(
+    observacao: str, numero_pedido: str, base: dict[str, dict[str, Any]] | None = None
+) -> dict[str, str] | None:
+    """
+    Pedido 005227/26/005 + "ITEM 5 remessa FORT" -> destino FORT (procurada na base).
+    Sem a empresa na base: devolve só o nome (cidade vazia) para o operador conferir.
+    """
+    try:
+        item = int(str(numero_pedido).split("/")[-1])
+    except ValueError:
+        return None
+    obs = _plano(observacao)
+    for m in _RE_REMESSA_ITEM.finditer(obs):
+        if item not in _itens(m.group("itens")):
+            continue
+        nome = m.group("nome").strip(" .")
+        busca = APELIDOS_REMESSA.get(nome, nome)
+        reg = _na_base(busca, base, todos=nome in APELIDOS_REMESSA)
+        triangular = "SIM" if _RE_TRIANGULAR.search(obs) else "NAO"
+        if reg:
+            return {
+                "nome": nome,
+                "cidade": _plano(str(reg.get("cidade") or "")),
+                "bairro": _plano(str(reg.get("bairro") or "")),
+                "cep": str(reg.get("cep") or ""),
+                "codigo": str(reg.get("codigo") or ""),
+                "triangular": triangular,
+                "origem": "base",
+            }
+        return {"nome": nome, "cidade": "", "bairro": "", "cep": "", "codigo": "", "triangular": triangular,
+                "origem": "observacao"}
+    return None

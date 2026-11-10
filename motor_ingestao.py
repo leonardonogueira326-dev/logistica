@@ -30,7 +30,7 @@ from extrator_pdf import (
     tipo_frete_padrao_superfine,
 )
 from memoria_operacional import consultar_memoria
-from destino_entrega import detectar_entrega, rotulo as rotulo_entrega
+from destino_entrega import detectar_entrega, detectar_remessa_por_item, rotulo as rotulo_entrega
 from models import (
     EventoEmail,
     PedidoConsolidado,
@@ -195,7 +195,13 @@ class MotorIngestao:
     def _aplicar_entrega_em_outro_endereco(self, pedido: PedidoFaturamento) -> None:
         """Remessa / NF triangular: o caminhão vai até a empresa indicada na observação."""
         destino = detectar_entrega(pedido.observacao_comercial, self._lookup_clientes)
-        if not destino:
+        if destino:
+            self._aplicar_destino(pedido, destino, "observação do pedido")
+
+    def _aplicar_destino(self, pedido: PedidoFaturamento, destino: dict, origem: str) -> None:
+        if not destino.get("cidade"):
+            pedido.entrega_em = f"{destino['nome']} — endereço não encontrado na base, confira"
+            self.avisos.append(f"{pedido.numero_pedido}: entregar em {destino['nome']} ({origem}) — sem endereço.")
             return
         pedido.entrega_em = rotulo_entrega(destino)
         pedido.entrega_cliente_codigo = destino.get("codigo", "")
@@ -203,7 +209,7 @@ class MotorIngestao:
         pedido.bairro = pedido.bairro_destino = normalizar_texto(destino.get("bairro", ""))
         pedido.cep = pedido.cep_destino = destino.get("cep", "")
         pedido.latitude = pedido.longitude = None
-        self.avisos.append(f"{pedido.numero_pedido}: entregar em {pedido.entrega_em} (observação do pedido).")
+        self.avisos.append(f"{pedido.numero_pedido}: entregar em {pedido.entrega_em} ({origem}).")
 
     def enriquecer_cadastro_mestre(self, pedido: PedidoFaturamento) -> None:
         """
@@ -286,7 +292,16 @@ class MotorIngestao:
                         f"não encontrado no cadastro mestre."
                     )
 
-            if pedido.tipo_frete not in ("RETIRA_FOB", "ENTREGA_TERCEIRO"):
+            remessa = detectar_remessa_por_item(
+                pedido.observacao_comercial, pedido.numero_pedido, self._lookup_clientes
+            )
+            if remessa:
+                # "ITEM 5 remessa FORT": material vai para a empresa que faz a mão de obra.
+                # Quem leva é a logística, mesmo com "RETIRA NA FABRICA" no Transp.
+                pedido.tipo_frete = "ENTREGA_DIRETA"
+                pedido.status_ia = config.STATUS_IA_NAO_APLICAVEL
+                self._aplicar_destino(pedido, remessa, "remessa por item")
+            elif pedido.tipo_frete not in ("RETIRA_FOB", "ENTREGA_TERCEIRO"):
                 self._aplicar_entrega_em_outro_endereco(pedido)
 
             cidade_rota = pedido.cidade_destino or normalizar_texto(pedido.cidade)

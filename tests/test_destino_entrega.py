@@ -48,3 +48,20 @@ def test_mistura_de_corredores_diz_quais_clientes():
     ])
     assert r["alerta_elastico"]
     assert r["mensagem_alerta_elastico"] == "Corredores misturados: Norte/Marginal (ZAGONEL, ATX) × Sul/ABC (BRIZANTE)"
+
+
+def test_remessa_por_item_andritz():
+    from destino_entrega import detectar_remessa_por_item
+
+    obs = ("NOTAS FISCAIS DE REMESSA ... - ITEM 1 a 4 e 6 a 9 remessa LAP para mao de obra R$ 4,50 - "
+           "ITEM 5 remessa FORT para mao de obra R$ 4,50 NF TRIANGULAR P/ IND BRAS DE CONES")
+    base = {
+        "3732": {"codigo": "3732", "razao_social": "FORT LAMINACAO DE PERFIS LTDA ME", "cidade": "SANTA BARBARA D OESTE",
+                 "bairro": "DISTRITO INDUSTRIAL I", "cep": "13456-114"},
+        "3262": {"codigo": "3262", "razao_social": "LAMINACAO DE ACOS PAULINIA LTDA EPP", "cidade": "PAULINIA",
+                 "bairro": "PQ DA INDUSTRIA BETEL", "cep": "13148-374"},
+    }
+    assert detectar_remessa_por_item(obs, "005227/26/005", base)["codigo"] == "3732"
+    assert detectar_remessa_por_item(obs, "005227/26/003", base)["codigo"] == "3262"
+    assert detectar_remessa_por_item(obs, "005227/26/010", base) is None
+    assert detectar_remessa_por_item("FAVOR ENTREGAR ITEM 2", "005227/26/002", base) is None
