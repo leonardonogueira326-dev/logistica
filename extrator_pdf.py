@@ -109,7 +109,7 @@ REGEX_RETIRA_FOB = re.compile(
 )
 
 REGEX_HUB_REDESPACHO = re.compile(
-    r"(?:LEVAR|ENTREGAR|DEIXAR)\s+(?:NA|NO|PARA\s+A|ATE\s+A|ATÉ\s+A)\s+TRANSP\w*|REDESPACHO",
+    r"(?:LEVAR?|ENTREGAR?|DEIXAR?)\s+(?:NA|NO|PARA\s+A|AT[EÉ](?:\s+A)?)\s+TRANSP\w*|REDESPACHO",
     re.IGNORECASE,
 )
 

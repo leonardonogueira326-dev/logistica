@@ -7,6 +7,7 @@ import {
   operarDivisao,
   registrarConsultaRepresentante,
   registrarLiberacaoComercial,
+  conferirFrete,
   informarPeso,
   getConsolidados,
   getRoteirizacao,
@@ -171,6 +172,14 @@ export function useLogisticaSession(sessionId: string | null) {
     },
   });
 
+  const conferirFreteMutation = useMutation({
+    mutationFn: ({ sid, body }: { sid: string; body: { ids: string[]; conferido: boolean } }) =>
+      conferirFrete(sid, body),
+    onSuccess: (_data, { sid }) => {
+      queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
+    },
+  });
+
   const pesoMutation = useMutation({
     mutationFn: ({ sid, body }: { sid: string; body: { id: string; peso_kg: number } }) =>
       informarPeso(sid, body),
@@ -241,6 +250,7 @@ export function useLogisticaSession(sessionId: string | null) {
     dividirMutation,
     consultaMutation,
     comercialMutation,
+    conferirFreteMutation,
     pesoMutation,
     segundaViagemMutation,
     patchConsolidadoDebounced,

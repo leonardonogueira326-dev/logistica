@@ -30,6 +30,7 @@ from api.schemas import (  # noqa: E402
     ConsultaRepresentanteResponseSchema,
     DividirCargaSchema,
     EquipeVeiculoSchema,
+    ConferirFreteBodySchema,
     FecharVeiculoSchema,
     NaoSaiuSchema,
     MoverPedidoSchema,
@@ -70,6 +71,9 @@ from gerador_romaneio import (  # noqa: E402
     nome_arquivo_romaneio_caminhao,
 )
 from historico_manager import arquivar_sessao, chave_linha_solicitacao  # noqa: E402
+from conferencia_frete import carregar_memoria as carregar_memoria_frete  # noqa: E402
+from conferencia_frete import evidencia as evidencia_frete  # noqa: E402
+from conferencia_frete import lembrar as lembrar_conferencia_frete  # noqa: E402
 from virada_do_dia import juntar_ao_quadro_novo, pendentes_do_quadro  # noqa: E402
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -97,7 +101,10 @@ def _limite_consulta() -> int:
 
 
 def _consolidado_com_pendencias(
-    c: PedidoConsolidado, limite: int | None = None, geo: tuple[dict, dict] | None = None
+    c: PedidoConsolidado,
+    limite: int | None = None,
+    geo: tuple[dict, dict] | None = None,
+    memoria_frete: dict | None = None,
 ) -> PedidoConsolidadoSchema:
     limite = _limite_consulta() if limite is None else limite
     dados = asdict(c)
@@ -105,8 +112,14 @@ def _consolidado_com_pendencias(
         ponto = geocodificacao.coordenada_da_linha(dados, *geo)
         if ponto:
             dados["latitude"], dados["longitude"] = ponto["lat"], ponto["lon"]
+    texto_ev, nivel_ev = evidencia_frete(c, memoria_frete)
+    dados.pop("evidencia_frete", None)
     return PedidoConsolidadoSchema(
-        **dados, pendencias=calc_pendencias(c, limite), motivo_parado=motivo_parado(c, limite)
+        **dados,
+        pendencias=calc_pendencias(c, limite),
+        motivo_parado=motivo_parado(c, limite),
+        evidencia_frete=texto_ev,
+        evidencia_nivel=nivel_ev,
     )
 
 
@@ -372,7 +385,11 @@ def ingest_session(
         session_id=session_id,
         linhas_novas=linhas_novas,
         resumo=ResumoIngestaoSchema(**payload["resumo"]),
-        consolidados=[_consolidado_com_pendencias(c) for c in consolidados_ativos],
+        consolidados=[
+            _consolidado_com_pendencias(c, memoria_frete=mem)
+            for mem in [carregar_memoria_frete()]
+            for c in consolidados_ativos
+        ],
         avisos=avisos,
         erros=erros,
     )
@@ -495,7 +512,11 @@ def list_consolidados(session_id: str) -> ConsolidadosListSchema:
         session_id=session_id,
         validated=validated,
         resumo=resumo,
-        consolidados=[_consolidado_com_pendencias(c, geo=geo) for c in consolidados],
+        consolidados=[
+            _consolidado_com_pendencias(c, geo=geo, memoria_frete=mem)
+            for mem in [carregar_memoria_frete()]
+            for c in consolidados
+        ],
         avisos=avisos if isinstance(avisos, list) else [],
     )
 
@@ -1071,6 +1092,33 @@ def registrar_consulta_representante(
     return ConsultaRepresentanteResponseSchema(
         ok=atualizados > 0, atualizados=atualizados, message=msg, alocados=alocados
     )
+
+
+@router.post("/{session_id}/conferir-frete", response_model=ConsultaRepresentanteResponseSchema)
+def conferir_frete(session_id: str, body: ConferirFreteBodySchema) -> ConsultaRepresentanteResponseSchema:
+    """Retira / coleta: o operador confere que a leitura está certa (ou desfaz)."""
+    try:
+        store.session_path(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada.")
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    agora = datetime.now(timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
+    memoria = carregar_memoria_frete()
+    tocadas, vermelhas = 0, []
+    for id_linha in body.ids:
+        ref = next((c for c in consolidados if mesma_linha(c, id_linha)), None)
+        if not ref:
+            continue
+        if body.conferido and evidencia_frete(ref, memoria)[1] == "VERMELHO":
+            vermelhas.append(ref)
+        patch = {"frete_conferido": "SIM" if body.conferido else "", "frete_conferido_em": agora if body.conferido else ""}
+        if _patch_consolidado_session(session_id, ref.id_item or id_linha, patch):
+            tocadas += 1
+    aprendidas = lembrar_conferencia_frete(vermelhas) if vermelhas else 0
+    msg = f"{tocadas} linha(s) {'conferida(s)' if body.conferido else 'voltaram para conferir'}."
+    if aprendidas:
+        msg += f" Aprendi {aprendidas} combinação(ões) cliente + transportadora."
+    return ConsultaRepresentanteResponseSchema(ok=True, atualizados=tocadas, message=msg)
 
 
 @router.post("/{session_id}/liberacao-comercial", response_model=ConsultaRepresentanteResponseSchema)

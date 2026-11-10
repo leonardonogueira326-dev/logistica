@@ -21,6 +21,13 @@ export interface PedidoConsolidado {
   liberacao_comercial_por?: string;
   liberacao_comercial_em?: string;
   liberacao_comercial_obs?: string;
+  transportadora?: string;
+  transportadora_codigo?: string;
+  frete_conferido?: string;
+  frete_conferido_em?: string;
+  /** Por que virou retira/coleta (calculado no servidor) */
+  evidencia_frete?: string;
+  evidencia_nivel?: "VERDE" | "VERMELHO" | "";
   obs_recebimento?: string;
   /** Remessa / NF triangular: entrega física em outra empresa */
   entrega_em?: string;
@@ -348,8 +355,9 @@ export type ConsolidadoPatch = Partial<
 
 export const STATUS_FRETE_OPCOES = [
   { value: "LIBERADO", label: "Liberado (frota própria)" },
-  { value: "RETIRA FOB", label: "Retira FOB" },
-  { value: "ENTREGA_TERCEIRO_HUB", label: "Redespacho (Hub terceiro)" },
+  { value: "ENTREGA_TERCEIRO_HUB", label: "Levar na transportadora" },
+  { value: "TERCEIRO", label: "Transportadora coleta" },
+  { value: "RETIRA FOB", label: "Cliente retira (FOB)" },
   { value: "BLOQUEIO FISCAL", label: "Bloqueio fiscal" },
 ] as const;
 

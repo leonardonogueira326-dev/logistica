@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Loader2,
+  PackageCheck,
   PhoneCall,
   Scale,
   ScanSearch,
@@ -44,7 +45,9 @@ export const Route = createFileRoute("/pendencias")({
   component: PendenciasPage,
 });
 
-type Aba = "leitura" | "comercial" | "expedicao";
+type Aba = "leitura" | "retira" | "comercial" | "expedicao";
+
+const ehRetiraOuColeta = (c: PedidoConsolidado) => c.status === "RETIRA FOB" || c.status === "TERCEIRO";
 
 const idLinha = (c: PedidoConsolidado) => c.id_item || c.numero_pedido_norm || c.numero_pedido;
 const temPend = (c: PedidoConsolidado, p: string) => (c.pendencias ?? []).includes(p as never);
@@ -83,6 +86,7 @@ function PendenciasPage() {
     patchConsolidadoDebounced,
     comercialMutation,
     pesoMutation,
+    conferirFreteMutation,
   } = useLogisticaSession(sessionId);
 
   const [aba, setAba] = useState<Aba>("leitura");
@@ -113,6 +117,15 @@ function PendenciasPage() {
   );
   const comercialPend = todas.filter((c) => temPend(c, "PAGAMENTO_ANTECIPADO"));
   const expedicao = todas.filter((c) => temPend(c, "PESO_ZERADO"));
+  const retiras = todas
+    .filter(ehRetiraOuColeta)
+    .sort(
+      (a, b) =>
+        Number(a.frete_conferido === "SIM") - Number(b.frete_conferido === "SIM") ||
+        Number(a.evidencia_nivel !== "VERMELHO") - Number(b.evidencia_nivel !== "VERMELHO"),
+    );
+  const retirasAConferir = retiras.filter((c) => c.frete_conferido !== "SIM");
+  const verdesAConferir = retirasAConferir.filter((c) => c.evidencia_nivel === "VERDE");
   const nRepresentante = todas.filter(
     (c) => temPend(c, "CONSULTA_REPRESENTANTE") && !temPend(c, "PAGAMENTO_ANTECIPADO") && !temPend(c, "PESO_ZERADO"),
   ).length;
@@ -128,6 +141,15 @@ function PendenciasPage() {
 
   const confirmar = async () => {
     if (!sessionId || !data) return;
+    if (
+      retirasAConferir.length &&
+      !window.confirm(
+        `${retirasAConferir.length} retira/coleta ainda sem conferir. Confirmar a leitura mesmo assim?`,
+      )
+    ) {
+      setAba("retira");
+      return;
+    }
     setConfirmando(true);
     try {
       const regrasNovas: Record<string, string> = {};
@@ -161,6 +183,12 @@ function PendenciasPage() {
     setSelecionados({});
   };
 
+  const conferir = async (ids: string[], conferido = true) => {
+    if (!sessionId || !ids.length) return;
+    const r = await conferirFreteMutation.mutateAsync({ sid: sessionId, body: { ids, conferido } });
+    setAviso(r.message);
+  };
+
   const salvarPeso = async (c: PedidoConsolidado) => {
     const valor = Number(String(pesos[idLinha(c)] ?? "").replace(",", "."));
     if (!sessionId || !(valor > 0)) return;
@@ -180,7 +208,7 @@ function PendenciasPage() {
     );
   }
 
-  const ocupado = comercialMutation.isPending || pesoMutation.isPending;
+  const ocupado = comercialMutation.isPending || pesoMutation.isPending || conferirFreteMutation.isPending;
 
   return (
     <div className="p-6 space-y-5">
@@ -240,6 +268,9 @@ function PendenciasPage() {
           <TabsTrigger value="leitura" className="gap-1.5">
             <ScanSearch className="w-4 h-4" /> Conferir leitura <Contador n={validado ? 0 : nLeitura} />
           </TabsTrigger>
+          <TabsTrigger value="retira" className="gap-1.5">
+            <PackageCheck className="w-4 h-4" /> Retira / Coleta <Contador n={retirasAConferir.length} />
+          </TabsTrigger>
           <TabsTrigger value="comercial" className="gap-1.5">
             <Banknote className="w-4 h-4" /> Comercial <Contador n={comercialPend.length} />
           </TabsTrigger>
@@ -289,6 +320,97 @@ function PendenciasPage() {
                     <span key="m" className="text-xs text-muted-foreground">—</span>
                   ),
                   <SeletorFrete key="f" valor={d.status} readonly={validado} onChange={(status) => patch(c, { status })} />,
+                ],
+              };
+            })}
+            onAbrir={setAberta}
+          />
+        </TabsContent>
+
+        <TabsContent value="retira" className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground max-w-3xl">
+              A logística não leva esses itens, mas confere se o sistema leu certo.{" "}
+              <span className="font-semibold text-destructive">Vermelho</span> = a observação não fala de coleta nem
+              retirada; pode ser “levar na transportadora” que ninguém escreveu. Se estiver errado, troque o frete.
+            </p>
+            <button
+              type="button"
+              disabled={ocupado || !verdesAConferir.length}
+              className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm text-white hover:bg-emerald-700 disabled:opacity-50"
+              onClick={() => void conferir(verdesAConferir.map(idLinha))}
+            >
+              Conferir todos os verdes ({verdesAConferir.length})
+            </button>
+          </div>
+          <Tabela
+            vazio="Nenhuma retira ou coleta nesta lista."
+            colunas={["Pedido · OF", "Cliente", "Cidade", "Peso", "Por que é retira/coleta", "Frete", ""]}
+            linhas={retiras.map((c) => {
+              const d = linha(c);
+              const ok = c.frete_conferido === "SIM";
+              return {
+                id: idLinha(c),
+                destaque: !ok && c.evidencia_nivel === "VERMELHO",
+                apagada: ok,
+                celulas: [
+                  <PedidoOf key="p" c={c} />,
+                  <span key="c" className="font-medium">
+                    {d.cliente}
+                    <span className="block text-[11px] font-normal text-muted-foreground">
+                      {(c.transportadora || "").split(" - ")[0]}
+                    </span>
+                  </span>,
+                  cidadeDe(d),
+                  <span key="k" className="whitespace-nowrap font-mono">{kg(c.peso_kg)}</span>,
+                  <span key="e" className="block max-w-[360px] text-xs">
+                    <span
+                      className={cn(
+                        "flex items-start gap-1.5",
+                        c.evidencia_nivel === "VERMELHO" ? "text-destructive font-medium" : "text-emerald-700",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "mt-1 h-2 w-2 shrink-0 rounded-full",
+                          c.evidencia_nivel === "VERMELHO" ? "bg-destructive" : "bg-emerald-500",
+                        )}
+                      />
+                      {c.evidencia_frete}
+                    </span>
+                    <span className="mt-1 flex flex-wrap gap-1">
+                      {c.liberacao_comercial === "AGUARDANDO" && (
+                        <Badge variant="outline" className="text-[10px] font-normal">Pagamento antecipado (comercial)</Badge>
+                      )}
+                      {!(c.peso_kg > 0) && (
+                        <Badge variant="outline" className="text-[10px] font-normal">Peso zerado</Badge>
+                      )}
+                    </span>
+                  </span>,
+                  <SeletorFrete key="f" valor={d.status} readonly={validado} onChange={(status) => patch(c, { status })} />,
+                  <span key="a" onClick={(e) => e.stopPropagation()}>
+                    {ok ? (
+                      <span className="flex items-center gap-2 text-xs text-emerald-700">
+                        <CheckCircle2 className="w-4 h-4" /> Conferido
+                        <button
+                          type="button"
+                          className="text-[11px] text-muted-foreground underline"
+                          onClick={() => void conferir([idLinha(c)], false)}
+                        >
+                          desfazer
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={ocupado}
+                        className="rounded-md border px-3 py-1 text-sm hover:bg-muted disabled:opacity-50"
+                        onClick={() => void conferir([idLinha(c)])}
+                      >
+                        Conferido
+                      </button>
+                    )}
+                  </span>,
                 ],
               };
             })}

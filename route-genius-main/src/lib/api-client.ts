@@ -275,6 +275,18 @@ export async function registrarLiberacaoComercial(
   });
 }
 
+/** Retira / coleta: operador conferiu a leitura (ou desfaz). */
+export async function conferirFrete(
+  sessionId: string,
+  body: { ids: string[]; conferido: boolean },
+): Promise<ConsultaRepresentanteResponse> {
+  return request<ConsultaRepresentanteResponse>(`/sessions/${sessionId}/conferir-frete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 /** Item veio com peso zerado: logística informa o peso. */
 export async function informarPeso(
   sessionId: string,

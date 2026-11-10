@@ -85,3 +85,4 @@ logs/
 
 # Quadros antigos guardados ao limpar o sistema
 data/_quadros_antigos/
+data/conferencia_frete.json

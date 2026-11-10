@@ -26,6 +26,14 @@ class PedidoConsolidadoSchema(BaseModel):
     liberacao_comercial_por: str = ""
     liberacao_comercial_em: str = ""
     liberacao_comercial_obs: str = ""
+    transportadora: str = ""
+    transportadora_codigo: str = ""
+    aprendizado_aplicado: str = "NAO"
+    frete_conferido: str = ""
+    frete_conferido_em: str = ""
+    # Calculado na leitura: por que virou retira/coleta e se é caso de risco
+    evidencia_frete: str = ""
+    evidencia_nivel: str = ""
     obs_recebimento: str = ""
     entrega_em: str = ""
     entrega_cliente_codigo: str = ""
@@ -252,6 +260,11 @@ class AjustarDivisaoSchema(BaseModel):
 
 class CargaRefSchema(BaseModel):
     id_carga: str
+
+
+class ConferirFreteBodySchema(BaseModel):
+    ids: list[str] = Field(min_length=1)
+    conferido: bool = True
 
 
 class LiberacaoComercialBodySchema(BaseModel):
