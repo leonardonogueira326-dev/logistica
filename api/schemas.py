@@ -38,6 +38,7 @@ class PedidoConsolidadoSchema(BaseModel):
     evidencia_nivel: str = ""
     obs_recebimento: str = ""
     entrega_em: str = ""
+    industrializacao: str = ""
     entrega_cliente_codigo: str = ""
     # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
     pendente_desde: str = ""

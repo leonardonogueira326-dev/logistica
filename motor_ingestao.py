@@ -184,13 +184,37 @@ class MotorIngestao:
 
             for pedido in self.pedidos_pdf:
                 self._aplicar_classificacao_frete(pedido)
+                remessa = self._aplicar_remessa_industrializacao(pedido)
                 self.enriquecer_cadastro_mestre(pedido)
+                if remessa:
+                    self._aplicar_destino(pedido, remessa, "remessa para industrialização")
+                    pedido.rota_logistica = resolver_rota_logistica(pedido.cidade_destino, self.params)
             self.consolidados = self._consolidar()
 
         except Exception as exc:
             self.erros.append(f"Falha no motor de ingestão: {exc}")
 
         return self.consolidados
+
+    def _aplicar_remessa_industrializacao(self, pedido: PedidoFaturamento) -> dict | None:
+        """
+        "ITEM 5 remessa FORT" na observação:
+        - peso ZERADO: o material vai para o terceiro industrializar -> logística leva
+          até a empresa (mesmo com "RETIRA NA FABRICA" no Transp);
+        - COM peso: já voltou industrializado -> segue o frete normal da linha.
+        """
+        remessa = detectar_remessa_por_item(
+            pedido.observacao_comercial, pedido.numero_pedido, self._lookup_clientes
+        )
+        if not remessa:
+            return None
+        if pedido.peso_kg > 0:
+            pedido.industrializacao = f"Voltou da industrialização ({remessa['nome']}) — segue para o cliente"
+            return None
+        pedido.industrializacao = f"Remessa para industrialização: {remessa['nome']}"
+        pedido.tipo_frete = "ENTREGA_DIRETA"
+        pedido.status_ia = config.STATUS_IA_NAO_APLICAVEL
+        return remessa
 
     def _aplicar_entrega_em_outro_endereco(self, pedido: PedidoFaturamento) -> None:
         """Remessa / NF triangular: o caminhão vai até a empresa indicada na observação."""
@@ -292,15 +316,8 @@ class MotorIngestao:
                         f"não encontrado no cadastro mestre."
                     )
 
-            remessa = detectar_remessa_por_item(
-                pedido.observacao_comercial, pedido.numero_pedido, self._lookup_clientes
-            )
-            if remessa:
-                # "ITEM 5 remessa FORT": material vai para a empresa que faz a mão de obra.
-                # Quem leva é a logística, mesmo com "RETIRA NA FABRICA" no Transp.
-                pedido.tipo_frete = "ENTREGA_DIRETA"
-                pedido.status_ia = config.STATUS_IA_NAO_APLICAVEL
-                self._aplicar_destino(pedido, remessa, "remessa por item")
+            if pedido.industrializacao.startswith("Remessa"):
+                pass  # destino da remessa é aplicado depois do cadastro (executar)
             elif pedido.tipo_frete not in ("RETIRA_FOB", "ENTREGA_TERCEIRO"):
                 self._aplicar_entrega_em_outro_endereco(pedido)
 
@@ -459,6 +476,7 @@ class MotorIngestao:
                     bairro=pedido.bairro_destino or pedido.bairro,
                     cidade_destino=pedido.cidade_destino or normalizar_texto(pedido.cidade),
                     entrega_em=pedido.entrega_em,
+                    industrializacao=pedido.industrializacao,
                     transportadora=pedido.transportadora,
                     transportadora_codigo=pedido.transportadora_codigo,
                     aprendizado_aplicado=pedido.aprendizado_aplicado,

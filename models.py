@@ -54,6 +54,8 @@ class PedidoFaturamento:
     bloco_bruto: str = ""
     erro_extracao: str = ""
     entrega_em: str = ""
+    # Remessa p/ industrialização: ida (peso 0) ou volta (com peso)
+    industrializacao: str = ""
     entrega_cliente_codigo: str = ""
     # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
     pendente_desde: str = ""
@@ -132,6 +134,8 @@ class PedidoConsolidado:
     obs_recebimento: str = ""
     # Remessa / NF triangular: entrega física em outra empresa
     entrega_em: str = ""
+    # Remessa p/ industrialização: ida (peso 0) ou volta (com peso)
+    industrializacao: str = ""
     entrega_cliente_codigo: str = ""
     # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
     pendente_desde: str = ""
@@ -195,6 +199,8 @@ class ItemRota:
     obs_recebimento: str = ""
     # Remessa / NF triangular: entrega física em outra empresa
     entrega_em: str = ""
+    # Remessa p/ industrialização: ida (peso 0) ou volta (com peso)
+    industrializacao: str = ""
     entrega_cliente_codigo: str = ""
     # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
     pendente_desde: str = ""

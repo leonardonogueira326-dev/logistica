@@ -34,6 +34,8 @@ export interface PedidoConsolidado {
   obs_recebimento?: string;
   /** Remessa / NF triangular: entrega física em outra empresa */
   entrega_em?: string;
+  /** Remessa p/ industrialização: ida (peso 0) ou volta (com peso) */
+  industrializacao?: string;
   entrega_cliente_codigo?: string;
   /** Veio de um dia anterior sem sair (data ISO do 1º dia pendente) */
   pendente_desde?: string;

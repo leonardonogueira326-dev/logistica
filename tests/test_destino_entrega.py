@@ -65,3 +65,23 @@ def test_remessa_por_item_andritz():
     assert detectar_remessa_por_item(obs, "005227/26/003", base)["codigo"] == "3262"
     assert detectar_remessa_por_item(obs, "005227/26/010", base) is None
     assert detectar_remessa_por_item("FAVOR ENTREGAR ITEM 2", "005227/26/002", base) is None
+
+
+def test_remessa_ida_com_peso_zerado_e_volta_com_peso(tmp_path, monkeypatch):
+    """Andritz /005 peso 0 -> vai para a FORT; Bruno /001 com 44 kg -> já voltou, segue o frete."""
+    from models import PedidoFaturamento
+    from motor_ingestao import MotorIngestao
+
+    m = MotorIngestao(str(tmp_path))
+    m._lookup_clientes = {
+        "3732": {"codigo": "3732", "razao_social": "FORT LAMINACAO DE PERFIS LTDA ME", "cidade": "SANTA BARBARA D OESTE",
+                 "bairro": "DISTRITO INDUSTRIAL I", "cep": "13456-114"},
+    }
+    obs = "REMESSA PARA INDUSTRIALIZAÇÃO: item 1 remessa para FORT mao de obra R$ 4,50"
+    ida = PedidoFaturamento(numero_pedido="005227/26/001", peso_kg=0, observacao_comercial=obs, tipo_frete="RETIRA_FOB")
+    volta = PedidoFaturamento(numero_pedido="005215/26/001", peso_kg=44, observacao_comercial=obs,
+                              tipo_frete="ENTREGA_TERCEIRO_HUB")
+    assert m._aplicar_remessa_industrializacao(ida)["codigo"] == "3732"
+    assert ida.tipo_frete == "ENTREGA_DIRETA" and ida.industrializacao.startswith("Remessa")
+    assert m._aplicar_remessa_industrializacao(volta) is None
+    assert volta.tipo_frete == "ENTREGA_TERCEIRO_HUB" and volta.industrializacao.startswith("Voltou")

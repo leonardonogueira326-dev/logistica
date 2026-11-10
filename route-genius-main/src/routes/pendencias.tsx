@@ -86,6 +86,7 @@ function alertasDa(c: PedidoConsolidado): Alerta[] {
       texto: `Consultar representante (${c.dias_uteis_antecedencia} d.u.) — fica no Kanban até liberar`,
       tom: "aviso",
     });
+  if (c.industrializacao) out.push({ texto: c.industrializacao, tom: "info" });
   if (c.entrega_em) out.push({ texto: `Entregar em: ${c.entrega_em}`, tom: "info" });
   return out;
 }
