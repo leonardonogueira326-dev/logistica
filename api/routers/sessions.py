@@ -667,11 +667,17 @@ def roteirizar(session_id: str, recomecar: bool = False) -> RoteirizacaoSchema:
     `recomecar=true` apaga o quadro e monta tudo de novo.
     """
     try:
-        _, consolidados, _ = _get_active_consolidados(session_id)
+        _, consolidados, validado = _get_active_consolidados(session_id)
     except SessionNotFoundError:
         raise HTTPException(status_code=404, detail="Sessão não encontrada.")
     except HTTPException:
         raise
+    if not validado:
+        # Nada vai para os caminhões sem o operador conferir a lista.
+        raise HTTPException(
+            status_code=409,
+            detail="A leitura ainda não foi conferida. Confira em Pendências e clique em 'Confirmar leitura e montar cargas'.",
+        )
 
     existente = store.load_roteirizacao(session_id)
     if existente and not recomecar:
