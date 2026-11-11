@@ -7,6 +7,13 @@ if not exist .venv\Scripts\python.exe (
   exit /b 1
 )
 
+rem Atualiza o codigo (GitHub publico) e os dados (GitHub privado) antes de abrir
+where git >nul 2>&1 && (
+  echo Buscando atualizacoes no GitHub...
+  git pull -q --ff-only >nul 2>&1 || echo [AVISO] Nao consegui atualizar o codigo agora - seguindo com a versao local.
+)
+call scripts\sincronizar_dados.bat
+
 rem IA local: troque o modelo aqui se quiser testar outro (ex.: qwen2.5:7b)
 set LOGISTICA_OLLAMA_MODEL=qwen2.5:3b
 if not exist logs mkdir logs

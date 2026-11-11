@@ -8,6 +8,8 @@ if not exist .venv\Scripts\python.exe (
 )
 set LOGISTICA_OLLAMA_MODEL=qwen2.5:3b
 
+where git >nul 2>&1 && git pull -q --ff-only >nul 2>&1
+call scripts\sincronizar_dados.bat
 if not exist logs mkdir logs
 rem Se uma versao antiga ainda estiver rodando, fecha antes (senao a nova nao entra)
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8000" ^| findstr "LISTENING"') do taskkill /F /PID %%p >nul 2>&1

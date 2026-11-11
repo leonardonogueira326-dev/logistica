@@ -86,3 +86,6 @@ logs/
 # Quadros antigos guardados ao limpar o sistema
 data/_quadros_antigos/
 data/conferencia_frete.json
+
+# Repositorio privado de dados (configurar_dados.bat)
+.git-dados/
