@@ -110,7 +110,7 @@ def rotulo(destino: dict[str, str]) -> str:
 # --------------------------------------------------------------- remessa por item
 # "ITEM 1 a 4 e 6 a 9 remessa LAP para mao de obra ... - ITEM 5 remessa FORT para ..."
 _RE_REMESSA_ITEM = re.compile(
-    r"\bITE(?:M|NS)\s+(?P<itens>\d+(?:\s*(?:A|ATE|-|,|E)\s*\d+)*)\s+(?:SAO\s+|E\s+)?REMESSA\s+"
+    r"\b(?:I?TE(?:M|NS)|TENS)\s+(?P<itens>\d+(?:\s*(?:A|ATE|-|,|E)?\s*\d+)*)\s+(?:SAO\s+|E\s+)?REMESSA\s+"
     r"(?:PARA\s+(?:A\s+)?)?(?P<nome>[A-Z0-9&][A-Z0-9&.]*(?:\s+(?!PARA\b|P/|DE\b|MAO\b)[A-Z0-9&][A-Z0-9&.]*){0,2})"
 )
 # Apelidos usados na observação -> como a empresa está na base de clientes
@@ -118,14 +118,15 @@ APELIDOS_REMESSA = {"FORT": "FORT LAMINACAO", "LAP": "LAMINACAO ACOS PAULINIA"}
 
 
 def _itens(expr: str) -> set[int]:
+    """'1 a 4 e 6 a 9' -> {1,2,3,4,6,7,8,9}; '2 3 4' -> {2,3,4}."""
     out: set[int] = set()
-    for parte in re.split(r"\s*(?:,|\bE\b)\s*", expr):
-        m = re.match(r"(\d+)\s*(?:A|ATE|-)\s*(\d+)$", parte.strip())
+    for parte in re.findall(r"\d+\s*(?:A|ATE|-)\s*\d+|\d+", expr):
+        m = re.match(r"(\d+)\s*(?:A|ATE|-)\s*(\d+)$", parte)
         if m:
             a, b = int(m.group(1)), int(m.group(2))
             out.update(range(min(a, b), max(a, b) + 1))
-        elif parte.strip().isdigit():
-            out.add(int(parte.strip()))
+        else:
+            out.add(int(parte))
     return out
 
 
@@ -140,7 +141,7 @@ def detectar_remessa_por_item(
         item = int(str(numero_pedido).split("/")[-1])
     except ValueError:
         return None
-    obs = _plano(observacao)
+    obs = re.sub(r"(?<=[A-Z])(MAO DE OBRA)", r" \1", _plano(observacao))  # "FORTmao de obra"
     for m in _RE_REMESSA_ITEM.finditer(obs):
         if item not in _itens(m.group("itens")):
             continue
