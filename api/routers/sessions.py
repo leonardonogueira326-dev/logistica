@@ -31,6 +31,7 @@ from api.schemas import (  # noqa: E402
     DividirCargaSchema,
     EquipeVeiculoSchema,
     ConferirFreteBodySchema,
+    EnsinarFraseBodySchema,
     FecharVeiculoSchema,
     NaoSaiuSchema,
     MoverPedidoSchema,
@@ -74,6 +75,12 @@ from historico_manager import arquivar_sessao, chave_linha_solicitacao  # noqa: 
 from conferencia_frete import carregar_memoria as carregar_memoria_frete  # noqa: E402
 from conferencia_frete import evidencia as evidencia_frete  # noqa: E402
 from conferencia_frete import lembrar as lembrar_conferencia_frete  # noqa: E402
+from frases import chave as chave_frase  # noqa: E402
+from frases import FRETE as SIG_FRETE  # noqa: E402
+from frases import analisar as analisar_frases  # noqa: E402
+from frases import carregar as carregar_frases  # noqa: E402
+from frases import ensinar as ensinar_frase  # noqa: E402
+from frases import quebrar as quebrar_frases  # noqa: E402
 from virada_do_dia import juntar_ao_quadro_novo, pendentes_do_quadro  # noqa: E402
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -105,6 +112,7 @@ def _consolidado_com_pendencias(
     limite: int | None = None,
     geo: tuple[dict, dict] | None = None,
     memoria_frete: dict | None = None,
+    dic_frases: dict | None = None,
 ) -> PedidoConsolidadoSchema:
     limite = _limite_consulta() if limite is None else limite
     dados = asdict(c)
@@ -120,6 +128,7 @@ def _consolidado_com_pendencias(
         motivo_parado=motivo_parado(c, limite),
         evidencia_frete=texto_ev,
         evidencia_nivel=nivel_ev,
+        frases=analisar_frases(c.observacao_comercial, dic_frases),
     )
 
 
@@ -386,8 +395,8 @@ def ingest_session(
         linhas_novas=linhas_novas,
         resumo=ResumoIngestaoSchema(**payload["resumo"]),
         consolidados=[
-            _consolidado_com_pendencias(c, memoria_frete=mem)
-            for mem in [carregar_memoria_frete()]
+            _consolidado_com_pendencias(c, memoria_frete=mem, dic_frases=dic)
+            for mem, dic in [(carregar_memoria_frete(), carregar_frases())]
             for c in consolidados_ativos
         ],
         avisos=avisos,
@@ -521,8 +530,8 @@ def list_consolidados(session_id: str) -> ConsolidadosListSchema:
         validated=validated,
         resumo=resumo,
         consolidados=[
-            _consolidado_com_pendencias(c, geo=geo, memoria_frete=mem)
-            for mem in [carregar_memoria_frete()]
+            _consolidado_com_pendencias(c, geo=geo, memoria_frete=mem, dic_frases=dic)
+            for mem, dic in [(carregar_memoria_frete(), carregar_frases())]
             for c in consolidados
         ],
         avisos=avisos if isinstance(avisos, list) else [],
@@ -1114,6 +1123,39 @@ def registrar_consulta_representante(
     return ConsultaRepresentanteResponseSchema(
         ok=atualizados > 0, atualizados=atualizados, message=msg, alocados=alocados
     )
+
+
+@router.post("/{session_id}/frases/ensinar", response_model=ConsultaRepresentanteResponseSchema)
+def ensinar_frase_endpoint(session_id: str, body: EnsinarFraseBodySchema) -> ConsultaRepresentanteResponseSchema:
+    """
+    O operador ensina o que uma frase nova significa. Vale para sempre (dicionário)
+    e, se muda o frete, já corrige as linhas deste quadro que ainda não foram conferidas.
+    """
+    try:
+        store.session_path(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada.")
+    try:
+        ensinar_frase(body.chave, body.exemplo, body.significado, body.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    corrigidas = 0
+    if body.significado == SIG_FRETE:
+        _, consolidados, _ = _get_active_consolidados(session_id)
+        for c in consolidados:
+            if c.conferida == "SIM" or c.status == body.status:
+                continue
+            if any(chave_frase(f) == body.chave for f in quebrar_frases(c.observacao_comercial)):
+                if _patch_consolidado_session(
+                    session_id,
+                    c.id_item or c.numero_pedido,
+                    {"status": body.status, "auditoria": (c.auditoria + " | FRETE PELA FRASE ENSINADA").strip(" |")},
+                ):
+                    corrigidas += 1
+    msg = "Frase aprendida."
+    if corrigidas:
+        msg += f" {corrigidas} linha(s) deste quadro mudaram de frete."
+    return ConsultaRepresentanteResponseSchema(ok=True, atualizados=corrigidas, message=msg)
 
 
 @router.post("/{session_id}/conferir", response_model=ConsultaRepresentanteResponseSchema)

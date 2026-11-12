@@ -30,6 +30,7 @@ from extrator_pdf import (
     tipo_frete_padrao_superfine,
 )
 from memoria_operacional import consultar_memoria
+from frases import carregar as carregar_frases, frete_ensinado
 from destino_entrega import detectar_entrega, detectar_remessa_por_item, rotulo as rotulo_entrega
 from models import (
     EventoEmail,
@@ -182,8 +183,18 @@ class MotorIngestao:
             else:
                 self.avisos.append("MSG não encontrado — bloqueios comerciais ignorados.")
 
+            dicionario = carregar_frases()
             for pedido in self.pedidos_pdf:
                 self._aplicar_classificacao_frete(pedido)
+                ensinado = frete_ensinado(pedido.observacao_comercial, dicionario)
+                if ensinado and ensinado != pedido.tipo_frete:
+                    # Frase que o operador ensinou vale mais que a regra e que a IA.
+                    self.avisos.append(
+                        f"{pedido.numero_pedido}: frete {ensinado} pela frase ensinada (antes {pedido.tipo_frete})."
+                    )
+                    pedido.tipo_frete = ensinado
+                    pedido.aprendizado_aplicado = "SIM"
+                    pedido.status_ia = config.STATUS_IA_NAO_APLICAVEL
                 remessa = self._aplicar_remessa_industrializacao(pedido)
                 self.enriquecer_cadastro_mestre(pedido)
                 if remessa:

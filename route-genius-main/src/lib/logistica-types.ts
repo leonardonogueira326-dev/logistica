@@ -1,5 +1,18 @@
 /** Tipos espelhando api/schemas.py */
 
+export interface FraseObservacao {
+  texto: string;
+  chave: string;
+  /** NOVA = ensinar; OPERADOR = já ensinada; REGRA = o sistema já entende */
+  situacao: "NOVA" | "OPERADOR" | "REGRA";
+  significado: string;
+  status?: string;
+  datas: string[];
+  sugestao?: string;
+  sugestao_status?: string;
+  ensinada_em?: string;
+}
+
 export interface PedidoConsolidado {
   numero_pedido: string;
   numero_pedido_norm: string;
@@ -31,6 +44,8 @@ export interface PedidoConsolidado {
   /** Por que virou retira/coleta (calculado no servidor) */
   evidencia_frete?: string;
   evidencia_nivel?: "VERDE" | "VERMELHO" | "";
+  /** Frases da observação (dicionário que aprende com o operador) */
+  frases?: FraseObservacao[];
   obs_recebimento?: string;
   /** Remessa / NF triangular: entrega física em outra empresa */
   entrega_em?: string;

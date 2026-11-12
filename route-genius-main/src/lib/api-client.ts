@@ -275,6 +275,18 @@ export async function registrarLiberacaoComercial(
   });
 }
 
+/** Operador ensina o que uma frase nova da observação significa. */
+export async function ensinarFrase(
+  sessionId: string,
+  body: { chave: string; exemplo: string; significado: string; status?: string },
+): Promise<ConsultaRepresentanteResponse> {
+  return request<ConsultaRepresentanteResponse>(`/sessions/${sessionId}/frases/ensinar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 /** Retira / coleta: operador conferiu a leitura (ou desfaz). */
 export async function conferirFrete(
   sessionId: string,

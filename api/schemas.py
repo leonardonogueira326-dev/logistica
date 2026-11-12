@@ -36,6 +36,8 @@ class PedidoConsolidadoSchema(BaseModel):
     # Calculado na leitura: por que virou retira/coleta e se é caso de risco
     evidencia_frete: str = ""
     evidencia_nivel: str = ""
+    # Frases da observação: NOVA (ensinar), OPERADOR (ensinada) ou REGRA
+    frases: list[dict[str, Any]] = Field(default_factory=list)
     obs_recebimento: str = ""
     entrega_em: str = ""
     industrializacao: str = ""
@@ -263,6 +265,13 @@ class AjustarDivisaoSchema(BaseModel):
 
 class CargaRefSchema(BaseModel):
     id_carga: str
+
+
+class EnsinarFraseBodySchema(BaseModel):
+    chave: str = Field(min_length=3)
+    exemplo: str = ""
+    significado: str
+    status: str = ""
 
 
 class ConferirFreteBodySchema(BaseModel):
