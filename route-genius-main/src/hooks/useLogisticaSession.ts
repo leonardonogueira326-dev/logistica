@@ -8,6 +8,7 @@ import {
   registrarConsultaRepresentante,
   registrarLiberacaoComercial,
   conferirFrete,
+  ensinarFrase,
   informarPeso,
   getConsolidados,
   getRoteirizacao,
@@ -180,6 +181,19 @@ export function useLogisticaSession(sessionId: string | null) {
     },
   });
 
+  const ensinarFraseMutation = useMutation({
+    mutationFn: ({
+      sid,
+      body,
+    }: {
+      sid: string;
+      body: { chave: string; exemplo: string; significado: string; status?: string };
+    }) => ensinarFrase(sid, body),
+    onSuccess: (_d, { sid }) => {
+      queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
+    },
+  });
+
   const pesoMutation = useMutation({
     mutationFn: ({ sid, body }: { sid: string; body: { id: string; peso_kg: number } }) =>
       informarPeso(sid, body),
@@ -251,6 +265,7 @@ export function useLogisticaSession(sessionId: string | null) {
     consultaMutation,
     comercialMutation,
     conferirFreteMutation,
+    ensinarFraseMutation,
     pesoMutation,
     segundaViagemMutation,
     patchConsolidadoDebounced,

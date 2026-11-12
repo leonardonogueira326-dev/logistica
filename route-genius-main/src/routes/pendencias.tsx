@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { getStoredSessionId, useLogisticaSession } from "@/hooks/useLogisticaSession";
-import type { PedidoConsolidado } from "@/lib/logistica-types";
+import type { FraseObservacao, PedidoConsolidado } from "@/lib/logistica-types";
 import {
   COD_PROCESSANDO_IA,
   COD_REVISAO_OBRIGATORIA,
@@ -32,7 +32,7 @@ export const Route = createFileRoute("/pendencias")({
   component: PendenciasPage,
 });
 
-type Filtro = "todas" | "faltam" | "alerta" | "retira";
+type Filtro = "todas" | "faltam" | "alerta" | "retira" | "frases";
 
 const ehRetiraOuColeta = (c: PedidoConsolidado) => c.status === "RETIRA FOB" || c.status === "TERCEIRO";
 
@@ -49,7 +49,9 @@ function motivoLeitura(c: PedidoConsolidado): string {
       .split("|")
       .map((x) => x.trim())
       .filter(Boolean)
-      .filter((x) => !/pagamento antecipado|peso zerado/i.test(x));
+      .filter((x) => !/pagamento antecipado|peso zerado/i.test(x))
+      // remessa / entregar em outra empresa já têm alerta próprio
+      .filter((x) => !((c.industrializacao || c.entrega_em) && /palavra suspeita: (remessa|fort|lap)/i.test(x)));
     if (partes.length) return partes.join(" | ");
   }
   if (c.flag_revisao_llm === "SIM" && c.sugestao_llm_status)
@@ -63,7 +65,52 @@ function motivoLeitura(c: PedidoConsolidado): string {
   return "";
 }
 
-type Alerta = { texto: string; tom: "erro" | "aviso" | "info" | "ok"; acao?: "peso" | "comercial" };
+type Alerta = {
+  texto: string;
+  tom: "erro" | "aviso" | "info" | "ok";
+  acao?: "peso" | "comercial" | "frase";
+  frase?: FraseObservacao;
+};
+
+/** "06/11/26" (ou 06/11, 06.11.2026) -> Date, usando o ano da lista quando faltar. */
+function dataDaFrase(texto: string, refIso?: string): Date | null {
+  const m = texto.match(/(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?/);
+  if (!m) return null;
+  const anoRef = refIso ? Number(refIso.slice(0, 4)) : new Date().getFullYear();
+  let ano = m[3] ? Number(m[3]) : anoRef;
+  if (ano < 100) ano += 2000;
+  return new Date(ano, Number(m[2]) - 1, Number(m[1]));
+}
+
+function alertasDasFrases(c: PedidoConsolidado): Alerta[] {
+  const out: Alerta[] = [];
+  const ref = c.data_referencia ? new Date(`${c.data_referencia}T00:00:00`) : null;
+  for (const f of c.frases ?? []) {
+    if (f.situacao === "NOVA") {
+      out.push({ texto: `Frase nova: “${f.texto}”`, tom: "aviso", acao: "frase", frase: f });
+      continue;
+    }
+    if (f.situacao !== "OPERADOR") continue;
+    const d = f.datas[0] ? dataDaFrase(f.datas[0], c.data_referencia) : null;
+    const dTxt = f.datas[0] ?? "";
+    if (f.significado === "FRETE")
+      out.push({ texto: `Frete pela frase que você ensinou (${ROTULO_FRETE[f.status ?? ""] ?? f.status})`, tom: "ok" });
+    else if (f.significado === "FATURAR_APOS")
+      out.push(
+        d && ref && d > ref
+          ? { texto: `Só faturar a partir de ${dTxt} — ainda não pode sair`, tom: "erro" }
+          : { texto: `Faturar a partir de ${dTxt} — já pode`, tom: "ok" },
+      );
+    else if (f.significado === "ENTREGAR_ATE")
+      out.push(
+        d && ref && d < ref
+          ? { texto: `Prazo vencido: entregar até ${dTxt}`, tom: "erro" }
+          : { texto: `Entregar até ${dTxt}`, tom: "aviso" },
+      );
+    else if (f.significado === "AVISAR") out.push({ texto: `📌 ${f.texto}`, tom: "aviso" });
+  }
+  return out;
+}
 
 /** Tudo o que o operador precisa ver numa linha, em uma lista só. */
 function alertasDa(c: PedidoConsolidado): Alerta[] {
@@ -86,6 +133,7 @@ function alertasDa(c: PedidoConsolidado): Alerta[] {
       texto: `Consultar representante (${c.dias_uteis_antecedencia} d.u.) — fica no Kanban até liberar`,
       tom: "aviso",
     });
+  out.push(...alertasDasFrases(c));
   if (c.industrializacao) out.push({ texto: c.industrializacao, tom: "info" });
   if (c.entrega_em) out.push({ texto: `Entregar em: ${c.entrega_em}`, tom: "info" });
   return out;
@@ -110,7 +158,9 @@ function PendenciasPage() {
     comercialMutation,
     pesoMutation,
     conferirFreteMutation,
+    ensinarFraseMutation,
   } = useLogisticaSession(sessionId);
+  const [ensinando, setEnsinando] = useState<FraseObservacao | null>(null);
 
   const [filtro, setFiltro] = useState<Filtro>("todas");
   const [drafts, setDrafts] = useState<Record<string, PedidoConsolidado>>({});
@@ -149,8 +199,13 @@ function PendenciasPage() {
         ? temAlerta(c)
         : filtro === "retira"
           ? ehRetiraOuColeta(c)
-          : true,
+          : filtro === "frases"
+            ? (c.frases ?? []).some((f) => f.situacao === "NOVA")
+            : true,
   );
+  const frasesNovas = new Set(
+    todas.flatMap((c) => (c.frases ?? []).filter((f) => f.situacao === "NOVA").map((f) => f.chave)),
+  ).size;
   const semAlertaAConferir = todas.filter((c) => c.conferida !== "SIM" && !temAlerta(c));
   const antecipados = todas.filter((c) => temPend(c, "PAGAMENTO_ANTECIPADO"));
   const linhaAberta = aberta ? todas.find((c) => idLinha(c) === aberta) ?? null : null;
@@ -219,7 +274,7 @@ function PendenciasPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const alvo = e.target as HTMLElement;
-      if (aberta || alvo.closest("input, textarea, select, [role='combobox'], [role='listbox'], button")) return;
+      if (aberta || ensinando || alvo.closest("input, textarea, select, [role='combobox'], [role='listbox'], button")) return;
       const atual = visiveis[foco];
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -316,6 +371,7 @@ function PendenciasPage() {
           {chip("faltam", "Faltam conferir", faltam)}
           {chip("alerta", "Com alerta", todas.filter(temAlerta).length)}
           {chip("retira", "Retira / coleta", todas.filter(ehRetiraOuColeta).length)}
+          {chip("frases", "Frases novas", frasesNovas)}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {antecipados.length > 0 && (
               <BotaoCopiar rotulo={`E-mail p/ comercial (${antecipados.length})`} texto={mensagemComercial(antecipados)} />
@@ -413,7 +469,7 @@ function PendenciasPage() {
                         <span
                           key={k}
                           className={cn(
-                            "inline-flex flex-wrap items-center gap-1.5 text-xs",
+                            "flex items-start gap-1.5 text-xs",
                             a.tom === "erro" && "text-destructive",
                             a.tom === "aviso" && "text-amber-700",
                             a.tom === "info" && "text-muted-foreground",
@@ -422,13 +478,14 @@ function PendenciasPage() {
                         >
                           <span
                             className={cn(
-                              "h-1.5 w-1.5 shrink-0 rounded-full",
+                              "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
                               a.tom === "erro" && "bg-destructive",
                               a.tom === "aviso" && "bg-amber-500",
                               a.tom === "info" && "bg-muted-foreground/50",
                               a.tom === "ok" && "bg-emerald-500",
                             )}
                           />
+                          <span className="flex flex-wrap items-center gap-1.5">
                           {a.texto}
                           {a.acao === "peso" && (
                             <span className="inline-flex items-center gap-1">
@@ -450,6 +507,18 @@ function PendenciasPage() {
                               </button>
                             </span>
                           )}
+                          {a.acao === "frase" && a.frase && (
+                            <button
+                              type="button"
+                              className="rounded border border-amber-600/50 px-2 py-0.5 text-[11px] text-amber-800 hover:bg-amber-50"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEnsinando(a.frase!);
+                              }}
+                            >
+                              Ensinar
+                            </button>
+                          )}
                           {a.acao === "comercial" && (
                             <button
                               type="button"
@@ -460,6 +529,7 @@ function PendenciasPage() {
                               Comercial liberou
                             </button>
                           )}
+                          </span>
                         </span>
                       ))}
                       {!alertas.length && <span className="text-xs text-muted-foreground">—</span>}
@@ -496,6 +566,21 @@ function PendenciasPage() {
           </tbody>
         </table>
       </div>
+
+      <EnsinarFrase
+        frase={ensinando}
+        ocupado={ensinarFraseMutation.isPending}
+        onClose={() => setEnsinando(null)}
+        onSalvar={async (significado, status) => {
+          if (!sessionId || !ensinando) return;
+          const r = await ensinarFraseMutation.mutateAsync({
+            sid: sessionId,
+            body: { chave: ensinando.chave, exemplo: ensinando.texto, significado, status },
+          });
+          setAviso(r.message);
+          setEnsinando(null);
+        }}
+      />
 
       <DetalheLinha
         c={linhaAberta}
@@ -683,6 +768,110 @@ function DetalheLinha({
               )}
             </div>
           </>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+const OPCOES_FRASE: { valor: string; rotulo: string; ajuda: string }[] = [
+  { valor: "IGNORAR", rotulo: "Não importa para a logística", ajuda: "Financeiro, fiscal, boleto… não aparece mais." },
+  { valor: "FRETE", rotulo: "Muda o frete", ajuda: "Toda linha com esta frase vai para o frete escolhido." },
+  { valor: "FATURAR_APOS", rotulo: "Prazo: só faturar a partir da data", ajuda: "A data é lida da frase em cada pedido." },
+  { valor: "ENTREGAR_ATE", rotulo: "Prazo: entregar até a data", ajuda: "Avisa e fica vermelho se o prazo passou." },
+  { valor: "AVISAR", rotulo: "Sempre me avisar", ajuda: "Mostra a frase toda vez (embalagem, parcial, ligar para alguém…)." },
+];
+
+function EnsinarFrase({
+  frase,
+  ocupado,
+  onClose,
+  onSalvar,
+}: {
+  frase: FraseObservacao | null;
+  ocupado: boolean;
+  onClose: () => void;
+  onSalvar: (significado: string, status: string) => Promise<void>;
+}) {
+  const [significado, setSignificado] = useState("");
+  const [status, setStatus] = useState("");
+  useEffect(() => {
+    setSignificado(frase?.sugestao || "AVISAR");
+    setStatus(frase?.sugestao_status || "");
+  }, [frase]);
+  return (
+    <Sheet open={!!frase} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="w-full sm:max-w-md">
+        <SheetHeader>
+          <SheetTitle>O que esta frase significa?</SheetTitle>
+        </SheetHeader>
+        {frase && (
+          <div className="mt-4 space-y-4">
+            <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">“{frase.texto}”</div>
+            <p className="text-xs text-muted-foreground">
+              Vale para sempre, inclusive com outras datas e números. A opção marcada é a sugestão do sistema — confira.
+            </p>
+            <div className="space-y-2">
+              {OPCOES_FRASE.map((o) => (
+                <label
+                  key={o.valor}
+                  className={cn(
+                    "flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2",
+                    significado === o.valor && "border-accent bg-accent/5",
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="significado"
+                    className="mt-1"
+                    checked={significado === o.valor}
+                    onChange={() => setSignificado(o.valor)}
+                  />
+                  <span>
+                    <span className="block text-sm font-medium">
+                      {o.rotulo}
+                      {frase.sugestao === o.valor && (
+                        <span className="ml-2 rounded bg-muted px-1.5 text-[10px] font-normal text-muted-foreground">
+                          sugestão
+                        </span>
+                      )}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">{o.ajuda}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {significado === "FRETE" && (
+              <label className="block text-sm">
+                <span className="text-xs text-muted-foreground">Frete</span>
+                <select
+                  className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                >
+                  <option value="">Escolha…</option>
+                  {STATUS_FRETE_OPCOES.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <div className="flex justify-end gap-2">
+              <button type="button" className="rounded-md border px-4 py-2 text-sm" onClick={onClose}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={ocupado || !significado || (significado === "FRETE" && !status)}
+                className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground disabled:opacity-50"
+                onClick={() => void onSalvar(significado, status)}
+              >
+                {ocupado ? "Salvando…" : "Ensinar"}
+              </button>
+            </div>
+          </div>
         )}
       </SheetContent>
     </Sheet>

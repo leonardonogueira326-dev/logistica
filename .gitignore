@@ -90,3 +90,4 @@ data/conferencia_frete.json
 # Repositorio privado de dados (configurar_dados.bat)
 .git-dados/
 LEIA-ME-DADOS.md
+data/frases_conhecidas.json
