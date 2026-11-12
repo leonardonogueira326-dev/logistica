@@ -85,3 +85,30 @@ def test_remessa_ida_com_peso_zerado_e_volta_com_peso(tmp_path, monkeypatch):
     assert ida.tipo_frete == "ENTREGA_DIRETA" and ida.industrializacao.startswith("Remessa")
     assert m._aplicar_remessa_industrializacao(volta) is None
     assert volta.tipo_frete == "ENTREGA_TERCEIRO_HUB" and volta.industrializacao.startswith("Voltou")
+
+
+def test_remessa_com_erros_de_digitacao_do_pdf():
+    """'tens 1 remessa para FORTmao de obra … tens 2 3 4 remessa para LAP' (Bruno, lista 09/11)."""
+    from destino_entrega import detectar_remessa_por_item
+
+    obs = "tens 1 remessa para FORTmao de obra R$ 4,65 - tens 2 3 4 remessa para LAP mao de obra R$ 4,50"
+    base = {"1": {"codigo": "1", "razao_social": "FORT LAMINACAO DE PERFIS", "cidade": "SBO"},
+            "2": {"codigo": "2", "razao_social": "LAMINACAO DE ACOS PAULINIA", "cidade": "PAULINIA"}}
+    assert detectar_remessa_por_item(obs, "005061/26/001", base)["codigo"] == "1"
+    assert detectar_remessa_por_item(obs, "005061/26/003", base)["codigo"] == "2"
+
+
+def test_observacao_sem_parcelas_e_sem_totais_do_relatorio():
+    """Parcelas (fonte menor) e 'Qtde. Itens / Preço Total' não entram na observação."""
+    import os
+
+    import pytest
+
+    from extrator_pdf import ExtratorPDF
+
+    pdf = "dados_teste/091102.pdf"
+    if not os.path.exists(pdf):
+        pytest.skip("sem o PDF de teste")
+    obs = {p.numero_pedido: p.observacao_comercial for p in ExtratorPDF(pdf).extrair()}
+    assert "5522,58" not in obs["005061/26/001"]
+    assert "Qtde" not in obs["004521/26/002"] and "Preço Total" not in obs["004521/26/002"]
