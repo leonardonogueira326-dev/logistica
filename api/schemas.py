@@ -26,7 +26,22 @@ class PedidoConsolidadoSchema(BaseModel):
     liberacao_comercial_por: str = ""
     liberacao_comercial_em: str = ""
     liberacao_comercial_obs: str = ""
+    transportadora: str = ""
+    transportadora_codigo: str = ""
+    aprendizado_aplicado: str = "NAO"
+    frete_conferido: str = ""
+    frete_conferido_em: str = ""
+    conferida: str = ""
+    conferida_em: str = ""
+    # Calculado na leitura: por que virou retira/coleta e se é caso de risco
+    evidencia_frete: str = ""
+    evidencia_nivel: str = ""
     obs_recebimento: str = ""
+    entrega_em: str = ""
+    industrializacao: str = ""
+    entrega_cliente_codigo: str = ""
+    # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
+    pendente_desde: str = ""
     # Calculadas na leitura (pendencias.py): o que segura a linha fora da rota
     pendencias: list[str] = Field(default_factory=list)
     motivo_parado: str = ""
@@ -121,6 +136,10 @@ class FecharVeiculoSchema(BaseModel):
     fechado: bool = True
 
 
+class NaoSaiuSchema(BaseModel):
+    nao_saiu: bool = True
+
+
 class UploadResponseSchema(BaseModel):
     session_id: str
     files_saved: list[str]
@@ -159,6 +178,10 @@ class ItemRotaSchema(BaseModel):
     peso_total_linha: float = 0.0
     divisao_automatica: str = ""
     obs_recebimento: str = ""
+    entrega_em: str = ""
+    entrega_cliente_codigo: str = ""
+    # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
+    pendente_desde: str = ""
     data_producao: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
@@ -204,6 +227,7 @@ class RoteirizacaoSchema(BaseModel):
     itens_retorno_por_veiculo: dict[str, list[ItemRotaSchema]] = Field(default_factory=dict)
     viagens_retorno_habilitadas: list[str] = Field(default_factory=list)
     veiculos_fechados: list[str] = Field(default_factory=list)
+    veiculos_nao_sairam: list[str] = Field(default_factory=list)
     # vid -> {motorista, ajudante, placa}
     equipe_por_veiculo: dict[str, dict[str, str]] = Field(default_factory=dict)
     mensagem: str = ""
@@ -239,6 +263,11 @@ class AjustarDivisaoSchema(BaseModel):
 
 class CargaRefSchema(BaseModel):
     id_carga: str
+
+
+class ConferirFreteBodySchema(BaseModel):
+    ids: list[str] = Field(min_length=1)
+    conferido: bool = True
 
 
 class LiberacaoComercialBodySchema(BaseModel):

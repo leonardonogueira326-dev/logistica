@@ -7,6 +7,7 @@ import {
   operarDivisao,
   registrarConsultaRepresentante,
   registrarLiberacaoComercial,
+  conferirFrete,
   informarPeso,
   getConsolidados,
   getRoteirizacao,
@@ -17,6 +18,7 @@ import {
   roteirizar,
   roteirizarQuadro,
   fecharVeiculo,
+  marcarNaoSaiu,
   definirEquipe,
   uploadSession,
 } from "@/lib/api-client";
@@ -106,6 +108,14 @@ export function useLogisticaSession(sessionId: string | null) {
     },
   });
 
+  const naoSaiuMutation = useMutation({
+    mutationFn: ({ sid, veiculoId, naoSaiu }: { sid: string; veiculoId: string; naoSaiu: boolean }) =>
+      marcarNaoSaiu(sid, veiculoId, naoSaiu),
+    onSuccess: (data, { sid }) => {
+      queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
+    },
+  });
+
   const equipeMutation = useMutation({
     mutationFn: ({ sid, veiculoId, equipe }: { sid: string; veiculoId: string; equipe: EquipeVeiculo }) =>
       definirEquipe(sid, veiculoId, equipe),
@@ -159,6 +169,14 @@ export function useLogisticaSession(sessionId: string | null) {
     onSuccess: (_data, { sid }) => {
       queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
       queryClient.invalidateQueries({ queryKey: ["roteirizacao", sid] });
+    },
+  });
+
+  const conferirFreteMutation = useMutation({
+    mutationFn: ({ sid, body }: { sid: string; body: { ids: string[]; conferido: boolean } }) =>
+      conferirFrete(sid, body),
+    onSuccess: (_data, { sid }) => {
+      queryClient.invalidateQueries({ queryKey: ["consolidados", sid] });
     },
   });
 
@@ -225,12 +243,14 @@ export function useLogisticaSession(sessionId: string | null) {
     roteirizarMutation,
     recomecarMutation,
     fecharMutation,
+    naoSaiuMutation,
     equipeMutation,
     moverMutation,
     anteciparMutation,
     dividirMutation,
     consultaMutation,
     comercialMutation,
+    conferirFreteMutation,
     pesoMutation,
     segundaViagemMutation,
     patchConsolidadoDebounced,

@@ -17,7 +17,7 @@ const navItems = [
   { to: "/", label: "Resumo Executivo", icon: LayoutDashboard },
   { to: "/setup", label: "Mesa de Comando", icon: Settings2 },
   { to: "/upload", label: "Upload & Processamento", icon: Upload },
-  { to: "/pendencias", label: "Pendências", icon: ClipboardCheck },
+  { to: "/pendencias", label: "Conferência", icon: ClipboardCheck },
   { to: "/roteirizar", label: "Roteirizar", icon: TruckIcon },
 ] as const;
 
@@ -43,6 +43,26 @@ function StatusIA() {
     >
       <span className={cn("inline-flex rounded-full h-2 w-2", online ? "bg-success" : "bg-muted-foreground/50")} />
       {data ? (online ? "IA local: ativa" : "IA local: desligada") : "IA local…"}
+    </div>
+  );
+}
+
+/** Código na pasta foi atualizado mas o servidor antigo continua rodando. */
+function AvisoVersao() {
+  const { data } = useQuery({
+    queryKey: ["versao"],
+    queryFn: async () => {
+      const r = await fetch("/api/versao");
+      return (await r.json()) as { rodando: string; no_disco: string; desatualizado: boolean };
+    },
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  if (!data?.desatualizado) return null;
+  return (
+    <div className="border-b border-amber-500/40 bg-amber-500/15 px-6 py-2 text-sm text-amber-900">
+      <b>Tem uma versão nova do sistema.</b> Feche a janela preta e abra o <b>iniciar.bat</b> de novo (depois
+      Ctrl+F5) — até lá você está usando a versão antiga.
     </div>
   );
 }
@@ -76,6 +96,13 @@ function QuadroDoDia() {
   });
   const atual = getStoredSessionId();
   useEffect(() => {
+    // Quadro guardado neste navegador não existe mais no servidor (ex.: sistema limpo)
+    if (atual && quadros && !quadros.some((x) => x.session_id === atual)) {
+      localStorage.removeItem("sf_logistica_session_id");
+      if (quadros.length) setStoredSessionId(quadros[0].session_id);
+      window.location.reload();
+      return;
+    }
     if (!atual && quadros && quadros.length) {
       setStoredSessionId(quadros[0].session_id);
       window.location.reload();
@@ -159,6 +186,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
+        <AvisoVersao />
         <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6">
           <div className="flex items-center gap-3">
             <StatusIA />

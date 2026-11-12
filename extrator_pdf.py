@@ -31,6 +31,25 @@ REGEX_SOLICITACAO = re.compile(r"Solicita[cç][aã]o de Faturamento\s*N[°ºo]?\
 REGEX_DATA_FATURAMENTO = re.compile(r"Data para Faturamento:\s*(\d{2}/\d{2}/\d{2,4})", re.IGNORECASE)
 REGEX_INICIO_ITEM = re.compile(r"^(\d{3})\s+(\d{6}/\d{2}/\d{3})\s+(.+)$")
 REGEX_PESO = re.compile(r"([\d.]+,\d{2})\s*(?:KG|ROLO)\b", re.IGNORECASE)
+# Itens vendidos por peça (carretel, caixa): Qtde. vem em PÇ/PÇS/UN/CX
+REGEX_QTDE_PECA = re.compile(r"([\d.]+,\d{2})\s*(?:P[ÇC]S?|UN|UND|CX|CXS|CAIXAS?)(?=\s|$)", re.IGNORECASE)
+# Peso de cada peça na descrição: "0,600mm 900GR", "1KG", "12,5Kg", "10 GR C/50 UN"
+REGEX_PESO_PECA = re.compile(
+    r"(?<![\d.,])(\d{1,4}(?:[.,]\d{1,3})?)\s*(KG|GRS?|G)\b(?:\s*C/\s*(\d+)\s*UN)?",
+    re.IGNORECASE,
+)
+
+
+def peso_por_peca_kg(texto: str) -> float:
+    """Peso (kg) de uma peça a partir da descrição; 0 se não achar."""
+    for m in REGEX_PESO_PECA.finditer(texto or ""):
+        valor = float(m.group(1).replace(".", "").replace(",", ".")) if "," in m.group(1) else float(m.group(1))
+        kg = valor if m.group(2).upper() == "KG" else valor / 1000
+        if m.group(3):  # "10 GR C/50 UN" -> caixa com 50
+            kg *= int(m.group(3))
+        if kg > 0:
+            return round(kg, 4)
+    return 0.0
 REGEX_DATA_PRODUCAO = re.compile(r"\b(\d{2}/\d{2}/\d{2})\b")
 REGEX_MOEDA = re.compile(r"(\d{1,3}(?:\.\d{3})*,\d{2})")
 REGEX_DESTINO = re.compile(r"^Destino:\s*(.+?)\s*-\s*(.+?)\s*$", re.IGNORECASE)
@@ -90,17 +109,20 @@ REGEX_RETIRA_FOB = re.compile(
 )
 
 REGEX_HUB_REDESPACHO = re.compile(
-    r"LEVAR\s+NA\s+TRANSPORTADORA|REDESPACHO",
+    r"(?:LEVAR?|ENTREGAR?|DEIXAR?)\s+(?:NA|NO|PARA\s+A|AT[EÉ](?:\s+A)?)\s+TRANSP\w*"
+    # "ENTREGAR ATÉ 06/11/26 CONFORME COMBINADO COM O CLIENTE NA TRANSPORTADORA" (mesma frase)
+    r"|(?:LEVAR?|ENTREGAR?|DEIXAR?)\b[^-]{0,90}?\bNA\s+TRANSPORTADORA"
+    r"|REDESPACHO",
     re.IGNORECASE,
 )
 
 REGEX_PALAVRAS_CHAVE_LOGISTICA = re.compile(
-    r"COLETA|RETIRA|BUSCAR|REDESPACHO|LEVAR\s+NA\s+TRANSPORTADORA|\bFOB\b|\bHUB\b",
+    r"COLETA|RETIRA|BUSCAR|REDESPACHO|LEVAR\s+NA\s+TRANSP\w*|\bFOB\b|\bHUB\b",
     re.IGNORECASE,
 )
 
 REGEX_PALAVRAS_CHAVE_FRETE = re.compile(
-    r"COLETA|RETIRA|BUSCAR|REDESPACHO|LEVAR\s+NA\s+TRANSPORTADORA|FOB|HUB|FABRICA|FÁBRICA",
+    r"COLETA|RETIRA|BUSCAR|REDESPACHO|LEVAR\s+NA\s+TRANSP\w*|FOB|HUB|FABRICA|FÁBRICA",
     re.IGNORECASE,
 )
 
@@ -139,7 +161,10 @@ def tem_palavras_chave_logisticas(
 ) -> bool:
     """Indica se há palavras-chave logísticas explícitas no texto."""
     texto = f"{normalizar_texto(texto_observacao)} {normalizar_texto(texto_descricao)}"
-    return bool(texto.strip() and REGEX_PALAVRAS_CHAVE_LOGISTICA.search(texto))
+    return bool(
+        texto.strip()
+        and (REGEX_PALAVRAS_CHAVE_LOGISTICA.search(texto) or REGEX_HUB_REDESPACHO.search(texto))
+    )
 
 
 def observacao_apenas_administrativa(
@@ -548,7 +573,18 @@ class ExtratorPDF:
                             pedido.estado_destino = normalizar_texto(pedido.estado)
                         break
 
-            rep_match = REGEX_REPRESENTANTE.search(texto_bloco)
+            # Transp: quebrou a linha ("..., 1233," / "GUARULHOS - 07221-080 - ...")
+            for idx, linha in enumerate(bloco[:-1]):
+                if linha.startswith("Transp:") and pedido.transportadora:
+                    seguinte = bloco[idx + 1].strip()
+                    if re.match(r"^[A-ZÀ-Ú][A-ZÀ-Ú' .]+\s-\s\d{5}-?\d{3}", seguinte):
+                        pedido.transportadora = f"{pedido.transportadora} {seguinte}"
+                    break
+
+            # Representante: na própria linha (a linha seguinte pode ser da descrição, ex. "CAIXA")
+            rep_match = next(
+                (m for l in bloco if (m := REGEX_REPRESENTANTE.search(l))), None
+            ) or REGEX_REPRESENTANTE.search(texto_bloco)
             if rep_match:
                 pedido.representante = normalizar_texto(rep_match.group(2))
 
@@ -557,6 +593,19 @@ class ExtratorPDF:
             elif not self._ultimo_modo_colunas:
                 pedido.observacao_comercial = self._extrair_observacao(bloco)
             pedido.descricao_item = self._enriquecer_descricao(bloco, pedido.descricao_item)
+
+            if not pedido.peso_kg and (m_peca := REGEX_QTDE_PECA.search(resto_primeira)):
+                # Peça (carretel/caixa): peso = quantidade x peso da peça na descrição.
+                # A 2ª linha da descrição pode cair fora do "Descrição:" (colunas) -> olha o bloco todo.
+                qtde = parse_peso_kg(m_peca.group(1))
+                texto_desc = " ".join(
+                    [pedido.descricao_item]
+                    + [l for l in bloco[1:] if not l.startswith(("Transp:", "Representante:", "Destino:"))]
+                )
+                unitario = peso_por_peca_kg(texto_desc)
+                if qtde and unitario:
+                    pedido.peso_kg = round(qtde * unitario, 2)
+                    pedido.peso_raw = f"{m_peca.group(1)} pç x {unitario:g} kg"
 
             desc_upper = normalizar_texto(pedido.descricao_item)
             obs_upper = normalizar_texto(pedido.observacao_comercial)

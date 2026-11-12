@@ -8,11 +8,11 @@ frete na conferência, a regra acompanha).
 |------------------------|-----------------------------------|----------------------------------|
 | CONSULTA_REPRESENTANTE | só frete da logística: frota      | representante: "pode carregar?"  |
 |                        | própria e levar na transportadora |                                  |
-| PAGAMENTO_ANTECIPADO   | qualquer frete                    | comercial libera por e-mail      |
-| PESO_ZERADO            | qualquer frete                    | logística informa o peso         |
+| PAGAMENTO_ANTECIPADO   | só frete da logística             | comercial libera por e-mail      |
+| PESO_ZERADO            | só frete da logística             | logística informa o peso         |
 
-Retira FOB e transportadora que coleta na fábrica não passam pela logística,
-então não pedem consulta ao representante.
+Retira FOB e transportadora que coleta na fábrica não passam pela logística:
+nenhuma pendência (o comercial trata direto com o cliente / a transportadora).
 """
 
 from __future__ import annotations
@@ -48,6 +48,8 @@ def pendencias(c: Any, limite_dias_uteis: int = 3) -> list[str]:
     abertas: list[str] = []
     if str(_get(c, "status")) == config.COD_BLOQUEIO_FISCAL:
         return abertas  # já está bloqueada por outro motivo
+    if not logistica_age(c):
+        return abertas  # retira / transportadora coleta: a logística não age
     try:
         dias = int(_get(c, "dias_uteis_antecedencia", 0) or 0)
     except (TypeError, ValueError):

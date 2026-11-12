@@ -1,17 +1,6 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import {
-  AlertTriangle,
-  Banknote,
-  Brain,
-  CheckCircle2,
-  ClipboardCheck,
-  Loader2,
-  PhoneCall,
-  Scale,
-  ScanSearch,
-  ShieldAlert,
-} from "lucide-react";
-import { useMemo, useState } from "react";
+import { Check, Keyboard, Loader2, ShieldAlert, Truck } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { BotaoCopiar } from "@/components/BotaoCopiar";
 import { Badge } from "@/components/ui/badge";
@@ -24,7 +13,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getStoredSessionId, useLogisticaSession } from "@/hooks/useLogisticaSession";
 import type { PedidoConsolidado } from "@/lib/logistica-types";
 import {
@@ -36,15 +24,17 @@ import {
   palavraChaveParaAprendizado,
   rotuloSugestaoLlm,
 } from "@/lib/logistica-types";
-import { dataBR, kg, mensagemComercial } from "@/lib/mensagens";
+import { dataBR, kg, mensagemComercial, textoPendenteDesde } from "@/lib/mensagens";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/pendencias")({
-  head: () => ({ meta: [{ title: "Pendências" }] }),
+  head: () => ({ meta: [{ title: "Conferência" }] }),
   component: PendenciasPage,
 });
 
-type Aba = "leitura" | "comercial" | "expedicao";
+type Filtro = "todas" | "faltam" | "alerta" | "retira";
+
+const ehRetiraOuColeta = (c: PedidoConsolidado) => c.status === "RETIRA FOB" || c.status === "TERCEIRO";
 
 const idLinha = (c: PedidoConsolidado) => c.id_item || c.numero_pedido_norm || c.numero_pedido;
 const temPend = (c: PedidoConsolidado, p: string) => (c.pendencias ?? []).includes(p as never);
@@ -59,17 +49,56 @@ function motivoLeitura(c: PedidoConsolidado): string {
       .split("|")
       .map((x) => x.trim())
       .filter(Boolean)
-      .filter((x) => !(temPend(c, "PAGAMENTO_ANTECIPADO") && /pagamento antecipado/i.test(x)))
-      .filter((x) => !(temPend(c, "PESO_ZERADO") && /peso zerado/i.test(x)));
+      .filter((x) => !/pagamento antecipado|peso zerado/i.test(x));
     if (partes.length) return partes.join(" | ");
   }
   if (c.flag_revisao_llm === "SIM" && c.sugestao_llm_status)
     return `IA sugere: ${rotuloSugestaoLlm(c.sugestao_llm_status)}`;
   if (c.status === "BLOQUEIO FISCAL" || c.status === "TRAVADO COMERCIAL")
     return `${c.status}${c.motivo_bloqueio ? ` — ${c.motivo_bloqueio}` : ""}`;
-  if (c.enriquecido_mestre !== "SIM") return "Cliente não encontrado na base — confira cidade e CEP";
+  // Endereço só importa quando a logística entrega (retira / transportadora que coleta não)
+  const logisticaEntrega = c.status === "LIBERADO" || c.status === "ENTREGA_TERCEIRO_HUB";
+  if (logisticaEntrega && c.enriquecido_mestre !== "SIM" && c.enriquecido_mestre !== "HUB")
+    return "Cliente não encontrado na base — confira cidade e CEP";
   return "";
 }
+
+type Alerta = { texto: string; tom: "erro" | "aviso" | "info" | "ok"; acao?: "peso" | "comercial" };
+
+/** Tudo o que o operador precisa ver numa linha, em uma lista só. */
+function alertasDa(c: PedidoConsolidado): Alerta[] {
+  const out: Alerta[] = [];
+  const leitura = motivoLeitura(c);
+  if (leitura) out.push({ texto: leitura, tom: c.status_ia === COD_PROCESSANDO_IA ? "info" : "erro" });
+  if (ehRetiraOuColeta(c)) {
+    if (c.evidencia_frete)
+      out.push({ texto: c.evidencia_frete, tom: c.evidencia_nivel === "VERMELHO" ? "erro" : "ok" });
+    if (c.liberacao_comercial === "AGUARDANDO") out.push({ texto: "Antecipado — o comercial trata", tom: "info" });
+    if (!(c.peso_kg > 0)) out.push({ texto: "Peso zerado — não é da logística", tom: "info" });
+  }
+  if (temPend(c, "PESO_ZERADO")) out.push({ texto: "Peso zerado: informe o peso da expedição", tom: "erro", acao: "peso" });
+  if (temPend(c, "PAGAMENTO_ANTECIPADO"))
+    out.push({ texto: "Pagamento antecipado: aguardando o comercial", tom: "aviso", acao: "comercial" });
+  if (c.liberacao_comercial === "LIBERADO" && !ehRetiraOuColeta(c))
+    out.push({ texto: `Comercial liberou${c.liberacao_comercial_por ? ` (${c.liberacao_comercial_por})` : ""}`, tom: "ok" });
+  if (temPend(c, "CONSULTA_REPRESENTANTE"))
+    out.push({
+      texto: `Consultar representante (${c.dias_uteis_antecedencia} d.u.) — fica no Kanban até liberar`,
+      tom: "aviso",
+    });
+  if (c.industrializacao) out.push({ texto: c.industrializacao, tom: "info" });
+  if (c.entrega_em) out.push({ texto: `Entregar em: ${c.entrega_em}`, tom: "info" });
+  return out;
+}
+
+const temAlerta = (c: PedidoConsolidado) => alertasDa(c).some((a) => a.tom === "erro" || a.tom === "aviso");
+
+const ROTULO_FRETE: Record<string, string> = {
+  LIBERADO: "Frota própria",
+  ENTREGA_TERCEIRO_HUB: "Levar na transp.",
+  TERCEIRO: "Transp. coleta",
+  "RETIRA FOB": "Cliente retira",
+};
 
 function PendenciasPage() {
   const navigate = useNavigate();
@@ -80,41 +109,52 @@ function PendenciasPage() {
     patchConsolidadoDebounced,
     comercialMutation,
     pesoMutation,
+    conferirFreteMutation,
   } = useLogisticaSession(sessionId);
 
-  const [aba, setAba] = useState<Aba>("leitura");
-  const [todasLinhas, setTodasLinhas] = useState(false);
-  const [mostrarLiberados, setMostrarLiberados] = useState(false);
+  const [filtro, setFiltro] = useState<Filtro>("todas");
   const [drafts, setDrafts] = useState<Record<string, PedidoConsolidado>>({});
   const [salvarRegras, setSalvarRegras] = useState<Record<string, boolean>>({});
   const [aberta, setAberta] = useState<string | null>(null);
-  const [selecionados, setSelecionados] = useState<Record<string, boolean>>({});
-  const [comercialPor, setComercialPor] = useState("");
-  const [comercialObs, setComercialObs] = useState("");
   const [pesos, setPesos] = useState<Record<string, string>>({});
   const [aviso, setAviso] = useState("");
   const [confirmando, setConfirmando] = useState(false);
+  const [foco, setFoco] = useState(0);
+  const linhasRef = useRef<Record<string, HTMLTableRowElement | null>>({});
 
   const data = consolidadosQuery.data;
-  const todas = data?.consolidados ?? [];
   const validado = !!data?.validated;
   const linha = (c: PedidoConsolidado) => drafts[idLinha(c)] ?? c;
 
-  const leitura = useMemo(
-    () => todas.filter((c) => todasLinhas || motivoLeitura(c)),
-    [todas, todasLinhas],
+  // Ordem da lista do PDF: solicitação, depois Seq.
+  const todas = useMemo(
+    () =>
+      [...(data?.consolidados ?? [])]
+        .map((c, i) => ({ c, i }))
+        .sort(
+          (a, b) =>
+            String(a.c.numero_solicitacao ?? "").localeCompare(String(b.c.numero_solicitacao ?? "")) ||
+            Number(a.c.seq_solicitacao || 9999) - Number(b.c.seq_solicitacao || 9999) ||
+            a.i - b.i,
+        )
+        .map((x) => x.c),
+    [data],
   );
-  const nLeitura = todas.filter((c) => motivoLeitura(c)).length;
-  const comercial = todas.filter(
-    (c) => temPend(c, "PAGAMENTO_ANTECIPADO") || (mostrarLiberados && c.liberacao_comercial === "LIBERADO"),
+  const conferidas = todas.filter((c) => c.conferida === "SIM").length;
+  const faltam = todas.length - conferidas;
+  const visiveis = todas.filter((c) =>
+    filtro === "faltam"
+      ? c.conferida !== "SIM"
+      : filtro === "alerta"
+        ? temAlerta(c)
+        : filtro === "retira"
+          ? ehRetiraOuColeta(c)
+          : true,
   );
-  const comercialPend = todas.filter((c) => temPend(c, "PAGAMENTO_ANTECIPADO"));
-  const expedicao = todas.filter((c) => temPend(c, "PESO_ZERADO"));
-  const nRepresentante = todas.filter(
-    (c) => temPend(c, "CONSULTA_REPRESENTANTE") && !temPend(c, "PAGAMENTO_ANTECIPADO") && !temPend(c, "PESO_ZERADO"),
-  ).length;
-
+  const semAlertaAConferir = todas.filter((c) => c.conferida !== "SIM" && !temAlerta(c));
+  const antecipados = todas.filter((c) => temPend(c, "PAGAMENTO_ANTECIPADO"));
   const linhaAberta = aberta ? todas.find((c) => idLinha(c) === aberta) ?? null : null;
+  const ocupado = comercialMutation.isPending || pesoMutation.isPending || conferirFreteMutation.isPending;
 
   const patch = (c: PedidoConsolidado, campos: Partial<PedidoConsolidado>) => {
     if (!sessionId) return;
@@ -123,8 +163,36 @@ function PendenciasPage() {
     patchConsolidadoDebounced(sessionId, id, campos);
   };
 
-  const confirmar = async () => {
+  const conferir = async (ids: string[], conferido = true) => {
+    if (!sessionId || !ids.length) return;
+    const r = await conferirFreteMutation.mutateAsync({ sid: sessionId, body: { ids, conferido } });
+    setAviso(r.message);
+  };
+
+  const comercialLiberou = async (c: PedidoConsolidado) => {
+    if (!sessionId) return;
+    const quem = window.prompt("Quem do comercial liberou (e-mail)?");
+    if (!quem?.trim()) return;
+    const r = await comercialMutation.mutateAsync({
+      sid: sessionId,
+      body: { ids: [idLinha(c)], resultado: "LIBERADO", liberado_por: quem.trim(), obs: "" },
+    });
+    setAviso(r.message);
+  };
+
+  const salvarPeso = async (c: PedidoConsolidado) => {
+    const valor = Number(String(pesos[idLinha(c)] ?? "").replace(",", "."));
+    if (!sessionId || !(valor > 0)) return;
+    const r = await pesoMutation.mutateAsync({ sid: sessionId, body: { id: idLinha(c), peso_kg: valor } });
+    setAviso(r.message);
+  };
+
+  const montarCargas = async () => {
     if (!sessionId || !data) return;
+    if (validado) {
+      navigate({ to: "/roteirizar" });
+      return;
+    }
     setConfirmando(true);
     try {
       const regrasNovas: Record<string, string> = {};
@@ -140,30 +208,42 @@ function PendenciasPage() {
       }
       await confirmMutation.mutateAsync({ sid: sessionId, regrasNovas, memoriaNovas });
       navigate({ to: "/roteirizar" });
+    } catch (e) {
+      setAviso(e instanceof Error ? e.message : "Não foi possível montar as cargas.");
     } finally {
       setConfirmando(false);
     }
   };
 
-  const marcados = (lista: PedidoConsolidado[]) => lista.map(idLinha).filter((id) => selecionados[id]);
-  const alvoComercial = marcados(comercialPend).length ? marcados(comercialPend) : comercialPend.map(idLinha);
+  // Teclado: ↑/↓ navega, Enter confere e desce, Espaço abre os detalhes.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const alvo = e.target as HTMLElement;
+      if (aberta || alvo.closest("input, textarea, select, [role='combobox'], [role='listbox'], button")) return;
+      const atual = visiveis[foco];
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setFoco((f) => Math.min(f + 1, visiveis.length - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setFoco((f) => Math.max(f - 1, 0));
+      } else if (e.key === "Enter" && atual) {
+        e.preventDefault();
+        void conferir([idLinha(atual)], atual.conferida !== "SIM");
+        setFoco((f) => Math.min(f + 1, visiveis.length - 1));
+      } else if (e.key === " " && atual) {
+        e.preventDefault();
+        setAberta(idLinha(atual));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
-  const responderComercial = async (ids: string[], resultado: "LIBERADO" | "AGUARDANDO") => {
-    if (!sessionId || !ids.length) return;
-    const r = await comercialMutation.mutateAsync({
-      sid: sessionId,
-      body: { ids, resultado, liberado_por: comercialPor, obs: comercialObs },
-    });
-    setAviso(r.message);
-    setSelecionados({});
-  };
-
-  const salvarPeso = async (c: PedidoConsolidado) => {
-    const valor = Number(String(pesos[idLinha(c)] ?? "").replace(",", "."));
-    if (!sessionId || !(valor > 0)) return;
-    const r = await pesoMutation.mutateAsync({ sid: sessionId, body: { id: idLinha(c), peso_kg: valor } });
-    setAviso(r.message);
-  };
+  useEffect(() => {
+    const c = visiveis[foco];
+    if (c) linhasRef.current[idLinha(c)]?.scrollIntoView({ block: "nearest" });
+  }, [foco, visiveis]);
 
   if (!sessionId) {
     return (
@@ -177,33 +257,83 @@ function PendenciasPage() {
     );
   }
 
-  const ocupado = comercialMutation.isPending || pesoMutation.isPending;
+  const pct = todas.length ? Math.round((conferidas / todas.length) * 100) : 0;
+  const chip = (id: Filtro, rotulo: string, n?: number) => (
+    <button
+      type="button"
+      onClick={() => {
+        setFiltro(id);
+        setFoco(0);
+      }}
+      className={cn(
+        "rounded-full border px-3 py-1 text-sm",
+        filtro === id ? "border-accent bg-accent text-accent-foreground" : "bg-background hover:bg-muted",
+      )}
+    >
+      {rotulo}
+      {n !== undefined && <span className="ml-1.5 opacity-80">{n}</span>}
+    </button>
+  );
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-6 space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Pendências</h1>
-          <p className="text-sm text-muted-foreground max-w-3xl">
-            Só o que ainda não pode ir para o caminhão
-            {todas[0]?.data_referencia ? ` — solicitação de ${dataBR(todas[0].data_referencia)}` : ""}. Clique numa
-            linha para ver todos os detalhes.
+          <h1 className="text-2xl font-bold tracking-tight">Conferência</h1>
+          <p className="text-sm text-muted-foreground">
+            Confira linha a linha, na ordem da lista
+            {todas[0]?.data_referencia ? ` de ${dataBR(todas[0].data_referencia)}` : ""}. Só linha conferida vai para o
+            Kanban.
           </p>
         </div>
         <button
-          disabled={!data || validado || confirmando}
-          onClick={() => void confirmar()}
+          disabled={!data || confirmando || (!validado && faltam > 0)}
+          onClick={() => void montarCargas()}
+          title={!validado && faltam ? `Faltam ${faltam} linha(s) para conferir` : undefined}
           className={cn(
             "inline-flex items-center gap-2 px-5 py-2.5 rounded-md text-sm font-semibold shadow-sm",
-            validado || confirmando
+            !data || confirmando || (!validado && faltam > 0)
               ? "bg-muted text-muted-foreground cursor-not-allowed"
               : "bg-accent text-accent-foreground hover:opacity-90",
           )}
-          title="Fecha a conferência da leitura e libera a montagem das cargas"
         >
-          {confirmando ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
-          {validado ? "Leitura conferida" : "Confirmar leitura e montar cargas"}
+          {confirmando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />}
+          {validado ? "Ir para o Kanban" : faltam > 0 ? `Montar cargas (faltam ${faltam})` : "Montar cargas"}
         </button>
+      </div>
+
+      <div className="rounded-xl border bg-card p-3 space-y-3">
+        <div className="flex items-center gap-3">
+          <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-muted">
+            <div className="h-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+          </div>
+          <span className="text-sm font-semibold tabular-nums">
+            {conferidas} de {todas.length} conferidas
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {chip("todas", "Todas", todas.length)}
+          {chip("faltam", "Faltam conferir", faltam)}
+          {chip("alerta", "Com alerta", todas.filter(temAlerta).length)}
+          {chip("retira", "Retira / coleta", todas.filter(ehRetiraOuColeta).length)}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {antecipados.length > 0 && (
+              <BotaoCopiar rotulo={`E-mail p/ comercial (${antecipados.length})`} texto={mensagemComercial(antecipados)} />
+            )}
+            <button
+              type="button"
+              disabled={ocupado || !semAlertaAConferir.length}
+              onClick={() => void conferir(semAlertaAConferir.map(idLinha))}
+              className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+              title="Confere de uma vez as linhas que não têm nenhum alerta"
+            >
+              Conferir as sem alerta ({semAlertaAConferir.length})
+            </button>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Keyboard className="w-3.5 h-3.5" /> ↑ ↓ navega · <b>Enter</b> confere e desce · <b>Espaço</b> abre os detalhes
+        </div>
       </div>
 
       {consolidadosQuery.isLoading && (
@@ -218,200 +348,154 @@ function PendenciasPage() {
         </div>
       )}
       {aviso && (
-        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-sm">{aviso}</div>
+        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm">{aviso}</div>
       )}
 
-      {nRepresentante > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2.5 text-sm">
-          <PhoneCall className="w-4 h-4 text-muted-foreground" />
-          {nRepresentante} {nRepresentante === 1 ? "linha aguarda" : "linhas aguardam"} o representante — ficam no
-          Kanban, coluna “Consultar representante”.
-          <Link to="/roteirizar" className="font-semibold text-accent underline">
-            Abrir Roteirizar
-          </Link>
-        </div>
-      )}
-
-      <Tabs value={aba} onValueChange={(v) => setAba(v as Aba)}>
-        <TabsList>
-          <TabsTrigger value="leitura" className="gap-1.5">
-            <ScanSearch className="w-4 h-4" /> Conferir leitura <Contador n={validado ? 0 : nLeitura} />
-          </TabsTrigger>
-          <TabsTrigger value="comercial" className="gap-1.5">
-            <Banknote className="w-4 h-4" /> Comercial <Contador n={comercialPend.length} />
-          </TabsTrigger>
-          <TabsTrigger value="expedicao" className="gap-1.5">
-            <Scale className="w-4 h-4" /> Expedição <Contador n={expedicao.length} />
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="leitura" className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-muted-foreground">
-              {validado && <b className="text-foreground">Leitura já conferida — só consulta. </b>}
-              Linhas em que o sistema ficou em dúvida ao ler o PDF. Corrija o frete ou o cadastro — se marcar
-              “aprender”, ele faz sozinho da próxima vez.
-            </p>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={todasLinhas} onCheckedChange={(v) => setTodasLinhas(v === true)} />
-              Mostrar todas as linhas ({todas.length})
-            </label>
-          </div>
-          <Tabela
-            vazio="Nenhuma dúvida de leitura. Pode confirmar e montar as cargas."
-            colunas={["Pedido · OF", "Cliente", "Cidade", "Peso", "Motivo", "Frete"]}
-            linhas={leitura.map((c) => {
+      <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-muted/40 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+              <th className="py-2.5 pl-4 pr-2 w-10">Seq</th>
+              <th className="py-2.5 pr-3">Pedido · OF</th>
+              <th className="py-2.5 pr-3">Cliente</th>
+              <th className="py-2.5 pr-3">Cidade</th>
+              <th className="py-2.5 pr-3 text-right">Peso</th>
+              <th className="py-2.5 pr-3">Frete</th>
+              <th className="py-2.5 pr-3">Alertas / ação</th>
+              <th className="py-2.5 pr-4 w-28 text-right">Conferido</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visiveis.map((c, i) => {
               const d = linha(c);
-              const motivo = motivoLeitura(c);
-              return {
-                id: idLinha(c),
-                destaque: c.revisao_obrigatoria === COD_REVISAO_OBRIGATORIA,
-                celulas: [
-                  <PedidoOf key="p" c={c} />,
-                  <span key="c" className="font-medium">{d.cliente}</span>,
-                  cidadeDe(d),
-                  <span key="k" className="whitespace-nowrap font-mono">{kg(c.peso_kg)}</span>,
-                  motivo ? (
-                    <span key="m" className="flex items-start gap-1 text-xs text-destructive">
-                      {c.status_ia === COD_PROCESSANDO_IA ? (
-                        <Loader2 className="w-3.5 h-3.5 shrink-0 mt-0.5 animate-spin" />
-                      ) : c.flag_revisao_llm === "SIM" ? (
-                        <Brain className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                      ) : (
-                        <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                      )}
-                      <span className="line-clamp-2">{motivo}</span>
-                    </span>
-                  ) : (
-                    <span key="m" className="text-xs text-muted-foreground">—</span>
-                  ),
-                  <SeletorFrete key="f" valor={d.status} readonly={validado} onChange={(status) => patch(c, { status })} />,
-                ],
-              };
-            })}
-            onAbrir={setAberta}
-          />
-        </TabsContent>
-
-        <TabsContent value="comercial" className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2">
-            <BotaoCopiar
-              rotulo="Copiar e-mail p/ comercial"
-              disabled={!comercialPend.length}
-              texto={mensagemComercial(
-                comercialPend.filter((c) => !marcados(comercialPend).length || selecionados[idLinha(c)]),
-              )}
-            />
-            <input
-              className="w-40 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-              placeholder="Liberado por *"
-              value={comercialPor}
-              onChange={(e) => setComercialPor(e.target.value)}
-            />
-            <input
-              className="w-56 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-              placeholder="E-mail (assunto / data)"
-              value={comercialObs}
-              onChange={(e) => setComercialObs(e.target.value)}
-            />
-            <button
-              type="button"
-              disabled={ocupado || !alvoComercial.length || !comercialPor.trim()}
-              title={!comercialPor.trim() ? "Informe quem do comercial liberou" : undefined}
-              className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm text-white hover:bg-emerald-700 disabled:opacity-50"
-              onClick={() => void responderComercial(alvoComercial, "LIBERADO")}
-            >
-              Comercial liberou{" "}
-              {marcados(comercialPend).length ? `(${marcados(comercialPend).length})` : "todos"}
-            </button>
-            <label className="ml-auto flex items-center gap-2 text-sm">
-              <Checkbox checked={mostrarLiberados} onCheckedChange={(v) => setMostrarLiberados(v === true)} />
-              Mostrar já liberados
-            </label>
-          </div>
-          <Tabela
-            vazio="Nenhum pagamento antecipado aguardando."
-            colunas={["", "Pedido · OF", "Cliente", "Cidade", "Peso", "Situação"]}
-            linhas={comercial.map((c) => ({
-              id: idLinha(c),
-              apagada: c.liberacao_comercial === "LIBERADO",
-              celulas: [
-                <span key="s" onClick={(e) => e.stopPropagation()}>
-                  <Checkbox
-                    disabled={c.liberacao_comercial === "LIBERADO"}
-                    checked={!!selecionados[idLinha(c)]}
-                    onCheckedChange={(v) => setSelecionados((p) => ({ ...p, [idLinha(c)]: v === true }))}
-                  />
-                </span>,
-                <PedidoOf key="p" c={c} />,
-                <span key="c" className="font-medium">
-                  {c.cliente}
-                  <span className="block text-[11px] font-normal text-muted-foreground">{c.representante}</span>
-                </span>,
-                cidadeDe(c),
-                <span key="k" className="whitespace-nowrap font-mono">{kg(c.peso_kg)}</span>,
-                c.liberacao_comercial === "LIBERADO" ? (
-                  <span key="x" className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                    <Badge className="bg-emerald-500/15 text-emerald-700 border border-emerald-500/40 hover:bg-emerald-500/15 gap-1">
-                      <CheckCircle2 className="w-3 h-3" /> {c.liberacao_comercial_por || "Liberado"}
-                    </Badge>
+              const ok = c.conferida === "SIM";
+              const alertas = alertasDa(c);
+              const id = idLinha(c);
+              return (
+                <tr
+                  key={id}
+                  ref={(el) => {
+                    linhasRef.current[id] = el;
+                  }}
+                  onClick={() => setFoco(i)}
+                  onDoubleClick={() => setAberta(id)}
+                  className={cn(
+                    "border-t align-top",
+                    ok && "bg-emerald-500/[0.05] text-muted-foreground",
+                    !ok && alertas.some((a) => a.tom === "erro") && "bg-destructive/[0.04]",
+                    i === foco && "outline outline-2 -outline-offset-2 outline-accent",
+                  )}
+                >
+                  <td className="py-2 pl-4 pr-2 font-mono text-xs text-muted-foreground">{c.seq_solicitacao}</td>
+                  <td className="py-2 pr-3">
+                    <PedidoOf c={c} />
+                  </td>
+                  <td className="py-2 pr-3">
+                    <button type="button" className="text-left font-medium hover:underline" onClick={() => setAberta(id)}>
+                      {d.cliente}
+                    </button>
+                    {ehRetiraOuColeta(c) && c.transportadora && (
+                      <span className="block text-[11px] text-muted-foreground">{c.transportadora.split(" - ")[0]}</span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3">{cidadeDe(d)}</td>
+                  <td className="py-2 pr-3 text-right whitespace-nowrap font-mono">{kg(c.peso_kg)}</td>
+                  <td className="py-2 pr-3">
+                    {validado ? (
+                      <span className="text-xs">{ROTULO_FRETE[d.status] ?? d.status}</span>
+                    ) : (
+                      <SeletorFrete valor={d.status} readonly={false} onChange={(status) => patch(c, { status })} />
+                    )}
+                  </td>
+                  <td className="py-2 pr-3">
+                    <div className="flex flex-col gap-1">
+                      {alertas.map((a, k) => (
+                        <span
+                          key={k}
+                          className={cn(
+                            "inline-flex flex-wrap items-center gap-1.5 text-xs",
+                            a.tom === "erro" && "text-destructive",
+                            a.tom === "aviso" && "text-amber-700",
+                            a.tom === "info" && "text-muted-foreground",
+                            a.tom === "ok" && "text-emerald-700",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "h-1.5 w-1.5 shrink-0 rounded-full",
+                              a.tom === "erro" && "bg-destructive",
+                              a.tom === "aviso" && "bg-amber-500",
+                              a.tom === "info" && "bg-muted-foreground/50",
+                              a.tom === "ok" && "bg-emerald-500",
+                            )}
+                          />
+                          {a.texto}
+                          {a.acao === "peso" && (
+                            <span className="inline-flex items-center gap-1">
+                              <input
+                                inputMode="decimal"
+                                placeholder="kg"
+                                className="w-20 rounded border border-input bg-background px-1.5 py-0.5 font-mono text-xs text-foreground"
+                                value={pesos[id] ?? ""}
+                                onChange={(e) => setPesos((p) => ({ ...p, [id]: e.target.value }))}
+                                onKeyDown={(e) => e.key === "Enter" && void salvarPeso(c)}
+                              />
+                              <button
+                                type="button"
+                                disabled={ocupado}
+                                className="rounded bg-accent px-2 py-0.5 text-[11px] text-accent-foreground"
+                                onClick={() => void salvarPeso(c)}
+                              >
+                                Salvar
+                              </button>
+                            </span>
+                          )}
+                          {a.acao === "comercial" && (
+                            <button
+                              type="button"
+                              disabled={ocupado}
+                              className="rounded border border-emerald-600/50 px-2 py-0.5 text-[11px] text-emerald-700 hover:bg-emerald-50"
+                              onClick={() => void comercialLiberou(c)}
+                            >
+                              Comercial liberou
+                            </button>
+                          )}
+                        </span>
+                      ))}
+                      {!alertas.length && <span className="text-xs text-muted-foreground">—</span>}
+                    </div>
+                  </td>
+                  <td className="py-2 pr-4 text-right">
                     <button
                       type="button"
-                      className="text-[11px] text-muted-foreground underline"
-                      onClick={() => void responderComercial([idLinha(c)], "AGUARDANDO")}
+                      disabled={ocupado}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFoco(i);
+                        void conferir([id], !ok);
+                      }}
+                      className={cn(
+                        "inline-flex h-8 w-8 items-center justify-center rounded-md border",
+                        ok ? "border-emerald-600 bg-emerald-600 text-white" : "bg-background hover:bg-muted",
+                      )}
+                      title={ok ? `Conferida ${c.conferida_em ?? ""} — clique para desfazer` : "Conferir (Enter)"}
                     >
-                      desfazer
+                      <Check className="w-4 h-4" />
                     </button>
-                  </span>
-                ) : (
-                  <span key="x" className="text-xs text-amber-700">Aguardando e-mail do comercial</span>
-                ),
-              ],
-            }))}
-            onAbrir={setAberta}
-          />
-        </TabsContent>
-
-        <TabsContent value="expedicao" className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            Peso zerado no PDF: informe o peso passado pela expedição (chat do Teams). O destino está na observação.
-          </p>
-          <Tabela
-            vazio="Nenhuma linha com peso zerado."
-            colunas={["Pedido · OF", "Cliente", "Cidade", "Destino (observação)", "Peso (kg)"]}
-            linhas={expedicao.map((c) => ({
-              id: idLinha(c),
-              celulas: [
-                <PedidoOf key="p" c={c} />,
-                <span key="c" className="font-medium">{c.cliente}</span>,
-                cidadeDe(c),
-                <span key="o" className="line-clamp-2 text-xs text-muted-foreground" title={c.observacao_comercial}>
-                  {c.observacao_comercial || "—"}
-                </span>,
-                <span key="k" className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                  <input
-                    inputMode="decimal"
-                    placeholder="kg"
-                    className="w-24 rounded-md border border-input bg-background px-2 py-1 font-mono text-sm"
-                    value={pesos[idLinha(c)] ?? ""}
-                    onChange={(e) => setPesos((p) => ({ ...p, [idLinha(c)]: e.target.value }))}
-                    onKeyDown={(e) => e.key === "Enter" && void salvarPeso(c)}
-                  />
-                  <button
-                    type="button"
-                    disabled={ocupado || !(Number(String(pesos[idLinha(c)] ?? "").replace(",", ".")) > 0)}
-                    className="rounded-md bg-accent px-3 py-1 text-sm text-accent-foreground disabled:opacity-50"
-                    onClick={() => void salvarPeso(c)}
-                  >
-                    Salvar
-                  </button>
-                </span>,
-              ],
-            }))}
-            onAbrir={setAberta}
-          />
-        </TabsContent>
-      </Tabs>
+                  </td>
+                </tr>
+              );
+            })}
+            {!visiveis.length && (
+              <tr>
+                <td colSpan={8} className="p-8 text-center text-sm text-muted-foreground">
+                  {filtro === "faltam" ? "Tudo conferido. Pode montar as cargas." : "Nenhuma linha neste filtro."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
 
       <DetalheLinha
         c={linhaAberta}
@@ -426,75 +510,17 @@ function PendenciasPage() {
   );
 }
 
-function Contador({ n }: { n: number }) {
-  return (
-    <span
-      className={cn(
-        "ml-1 rounded-full px-1.5 text-[11px] font-semibold",
-        n ? "bg-destructive/15 text-destructive" : "bg-muted text-muted-foreground",
-      )}
-    >
-      {n}
-    </span>
-  );
-}
-
 function PedidoOf({ c }: { c: PedidoConsolidado }) {
   return (
     <span className="font-mono text-xs">
       {c.numero_pedido}
       {c.of_ano && <span className="block text-[10px] text-muted-foreground">OF {c.of_ano}</span>}
+      {c.pendente_desde && (
+        <span className="mt-0.5 block font-sans text-[10px] font-semibold text-rose-700">
+          {textoPendenteDesde(c.pendente_desde)}
+        </span>
+      )}
     </span>
-  );
-}
-
-function Tabela({
-  colunas,
-  linhas,
-  vazio,
-  onAbrir,
-}: {
-  colunas: string[];
-  linhas: { id: string; celulas: React.ReactNode[]; destaque?: boolean; apagada?: boolean }[];
-  vazio: string;
-  onAbrir: (id: string) => void;
-}) {
-  if (!linhas.length) {
-    return <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{vazio}</div>;
-  }
-  return (
-    <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-muted/40 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
-            {colunas.map((c, i) => (
-              <th key={i} className={cn("py-2.5 pr-3", i === 0 && "pl-4")}>
-                {c}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {linhas.map((l) => (
-            <tr
-              key={l.id}
-              onClick={() => onAbrir(l.id)}
-              className={cn(
-                "cursor-pointer border-t hover:bg-muted/30",
-                l.destaque && "bg-destructive/[0.04]",
-                l.apagada && "opacity-60",
-              )}
-            >
-              {l.celulas.map((cel, i) => (
-                <td key={i} className={cn("py-2 pr-3 align-middle", i === 0 && "pl-4")}>
-                  {cel}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }
 
@@ -581,6 +607,11 @@ function DetalheLinha({
               {motivoLeitura(c) && (
                 <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
                   {motivoLeitura(c)}
+                </div>
+              )}
+              {c.entrega_em && (
+                <div className="rounded-md border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-sm text-violet-800">
+                  <b>Entregar em:</b> {c.entrega_em}
                 </div>
               )}
               {(c.pendencias ?? []).length > 0 && (

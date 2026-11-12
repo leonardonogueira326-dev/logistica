@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import { Download, Info, LayoutGrid, Loader2, Map, RotateCcw, Route as IconeRota, Zap } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
@@ -27,7 +27,7 @@ export const Route = createFileRoute("/roteirizar")({
 
 function RoteirizarPage() {
   const sessionId = getStoredSessionId();
-  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, recomecarMutation, fecharMutation, equipeMutation, moverMutation, anteciparMutation, segundaViagemMutation, dividirMutation } =
+  const { consolidadosQuery, roteirizacaoQuery, roteirizarMutation, recomecarMutation, fecharMutation, naoSaiuMutation, equipeMutation, moverMutation, anteciparMutation, segundaViagemMutation, dividirMutation } =
     useLogisticaSession(sessionId);
   const queryClient = useQueryClient();
   const [lastWarning, setLastWarning] = useState("");
@@ -48,19 +48,39 @@ function RoteirizarPage() {
     return map;
   }, [consolidadosQuery.data]);
 
+  const conferido = !!consolidadosQuery.data?.validated;
+
   useEffect(() => {
-    if (!sessionId || roteirizacaoQuery.data || roteirizacaoQuery.isFetching || roteirizarMutation.isPending) return;
-    // Quadro ainda não montado (null) ou erro: monta pela primeira vez.
+    if (!sessionId || !conferido || roteirizacaoQuery.data || roteirizacaoQuery.isFetching || roteirizarMutation.isPending)
+      return;
+    // Só monta o quadro depois que o operador conferiu a lista (Pendências → Confirmar).
     if (roteirizacaoQuery.data === null || roteirizacaoQuery.isError) {
       roteirizarMutation.mutate(sessionId);
     }
-  }, [sessionId, roteirizacaoQuery.data, roteirizacaoQuery.isError, roteirizacaoQuery.isFetching, roteirizarMutation]);
+  }, [sessionId, conferido, roteirizacaoQuery.data, roteirizacaoQuery.isError, roteirizacaoQuery.isFetching, roteirizarMutation]);
 
   if (!sessionId) {
     return (
       <div className="p-6">
         <div className="rounded-xl border border-warning/40 bg-warning/10 p-6 text-sm">
           Nenhuma sessão ativa. Complete upload e validação primeiro.
+        </div>
+      </div>
+    );
+  }
+
+  if (consolidadosQuery.data && !conferido) {
+    return (
+      <div className="p-6">
+        <div className="rounded-xl border border-warning/40 bg-warning/10 p-6 text-sm space-y-2">
+          <div className="font-semibold">A lista ainda não foi conferida.</div>
+          <div>
+            Nada vai para os caminhões sem a sua aprovação. Confira a lista e clique em{" "}
+            <b>Confirmar leitura e montar cargas</b>.
+          </div>
+          <Link to="/pendencias" className="inline-block font-semibold text-accent underline">
+            Ir para a conferência
+          </Link>
         </div>
       </div>
     );
@@ -94,6 +114,12 @@ function RoteirizarPage() {
     } finally {
       setOtimizando(false);
     }
+  };
+
+  const handleNaoSaiu = async (veiculoId: string, naoSaiu: boolean) => {
+    if (!sessionId) return;
+    const r = await naoSaiuMutation.mutateAsync({ sid: sessionId, veiculoId, naoSaiu });
+    setLastWarning(r.warning ?? "");
   };
 
   const handleFecharVeiculo = async (veiculoId: string, fechado: boolean) => {
@@ -280,6 +306,7 @@ function RoteirizarPage() {
               onMove={handleMove}
               onDivisao={handleDivisao}
               onFecharVeiculo={handleFecharVeiculo}
+              onNaoSaiu={handleNaoSaiu}
               onEquipe={handleEquipe}
               onAntecipar={handleAntecipar}
               onExportRomaneio={handleExportRomaneioCaminhao}

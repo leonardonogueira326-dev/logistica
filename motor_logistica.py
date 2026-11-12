@@ -4,6 +4,8 @@ Motor de Logística — clusterização por rotas, alocação de frota e jornada
 
 from __future__ import annotations
 
+import re
+
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
@@ -76,6 +78,9 @@ class MotorLogistica:
         self.viagens_retorno_habilitadas: list[str] = []
         # Caminhões que o operador fechou: a sugestão automática não mexe neles.
         self.veiculos_fechados: list[str] = []
+        # Caminhão montado que não saiu (motorista faltou, quebrou): a carga
+        # volta para a próxima rota quando o dia seguinte for aberto.
+        self.veiculos_nao_sairam: list[str] = []
         # vid -> {motorista, ajudante, placa} (vai para o romaneio)
         self.equipe_por_veiculo: dict[str, dict[str, str]] = {}
         self._cache_mapa_corredor: dict[str, int] = {}
@@ -115,25 +120,38 @@ class MotorLogistica:
             return None
         return max(contagem, key=contagem.get)
 
+    def _nome_corredor(self, corredor_id: int) -> str:
+        info = self.params.get("corredores_logisticos", {}).get(str(corredor_id)) or {}
+        return str(info.get("nome") or f"Corredor {corredor_id}")
+
+    @staticmethod
+    def _apelido_cliente(nome: str) -> str:
+        m = re.search(r"\(([^()]+)\)\s*$", nome or "")
+        return (m.group(1) if m else (nome or "")[:18]).strip()
+
     def verificar_efeito_elastico(self, veiculo_pedidos: list[dict[str, Any]]) -> dict[str, Any]:
-        """Detecta mistura de corredores rodoviários na fila principal do veículo."""
-        corredores: set[int] = set()
+        """
+        Detecta mistura de corredores rodoviários no caminhão e diz QUAIS:
+        "Corredores misturados: Norte/Marginal (ZAGONEL, ATX) × Sul/ABC (BRIZANTE)".
+        """
+        por_corredor: dict[int, list[str]] = defaultdict(list)
         for pedido in veiculo_pedidos:
             corredor = self._corredor_pedido(pedido)
-            if corredor is not None:
-                corredores.add(corredor)
+            if corredor is None:
+                continue
+            apelido = self._apelido_cliente(str(pedido.get("cliente") or ""))
+            if apelido and apelido not in por_corredor[corredor]:
+                por_corredor[corredor].append(apelido)
 
-        if len(corredores) <= 1:
+        if len(por_corredor) <= 1:
             return {"alerta_elastico": False, "mensagem_alerta_elastico": ""}
 
-        nums = sorted(corredores)
-        if len(nums) == 2:
-            rotulo = f"{nums[0]} e {nums[1]}"
-        else:
-            rotulo = ", ".join(str(n) for n in nums[:-1]) + f" e {nums[-1]}"
+        # o corredor com menos clientes aparece por último (normalmente é o "intruso")
+        ordem = sorted(por_corredor, key=lambda c: (-len(por_corredor[c]), c))
+        partes = [f"{self._nome_corredor(c)} ({', '.join(por_corredor[c])})" for c in ordem]
         return {
             "alerta_elastico": True,
-            "mensagem_alerta_elastico": f"Conflito Geográfico: Mistura de Corredores [{rotulo}]",
+            "mensagem_alerta_elastico": "Corredores misturados: " + " × ".join(partes),
         }
 
     def _aplicar_alertas_rota(self, rota: RotaVeiculo, itens: list[dict[str, Any]]) -> None:
@@ -212,6 +230,9 @@ class MotorLogistica:
                         "id_item": c.id_item or c.numero_pedido,
                         "of_ano": c.of_ano,
                         "obs_recebimento": getattr(c, "obs_recebimento", ""),
+                        "entrega_em": getattr(c, "entrega_em", ""),
+                        "entrega_cliente_codigo": getattr(c, "entrega_cliente_codigo", ""),
+                        "pendente_desde": getattr(c, "pendente_desde", ""),
                         "data_producao": c.data_producao,
                         "cliente": c.cliente,
                         "cliente_codigo": c.cliente_codigo,
@@ -246,6 +267,9 @@ class MotorLogistica:
                         "id_item": c.id_item or c.numero_pedido,
                         "of_ano": c.of_ano,
                         "obs_recebimento": getattr(c, "obs_recebimento", ""),
+                        "entrega_em": getattr(c, "entrega_em", ""),
+                        "entrega_cliente_codigo": getattr(c, "entrega_cliente_codigo", ""),
+                        "pendente_desde": getattr(c, "pendente_desde", ""),
                         "data_producao": c.data_producao,
                         "cliente": c.cliente,
                         "cliente_codigo": c.cliente_codigo,
@@ -271,6 +295,9 @@ class MotorLogistica:
                     "id_item": c.id_item or c.numero_pedido,
                     "of_ano": c.of_ano,
                     "obs_recebimento": getattr(c, "obs_recebimento", ""),
+                    "entrega_em": getattr(c, "entrega_em", ""),
+                    "entrega_cliente_codigo": getattr(c, "entrega_cliente_codigo", ""),
+                    "pendente_desde": getattr(c, "pendente_desde", ""),
                     "data_producao": c.data_producao,
                     "cliente": c.cliente,
                     "cliente_codigo": c.cliente_codigo,
@@ -347,6 +374,9 @@ class MotorLogistica:
                             "id_item": p.get("id_item", ""),
                             "of_ano": p.get("of_ano", ""),
                             "obs_recebimento": p.get("obs_recebimento", ""),
+                            "entrega_em": p.get("entrega_em", ""),
+                            "entrega_cliente_codigo": p.get("entrega_cliente_codigo", ""),
+                            "pendente_desde": p.get("pendente_desde", ""),
                             "data_producao": p.get("data_producao", ""),
                             "parte": str(p.get("parte", "")),
                             "divisao_automatica": str(p.get("divisao_automatica", "") or ""),
@@ -387,6 +417,18 @@ class MotorLogistica:
             if b.get("motivo") not in self.MOTIVOS_DO_SISTEMA:
                 ids.add(self._id_item_de(b))
         return ids
+
+    def marcar_nao_saiu(self, veiculo_id: str, nao_saiu: bool = True) -> tuple[bool, str]:
+        nome = next((r.veiculo_nome for r in self.rotas if r.veiculo_id == veiculo_id), veiculo_id)
+        if nao_saiu and veiculo_id not in self.veiculos_nao_sairam:
+            self.veiculos_nao_sairam.append(veiculo_id)
+            if veiculo_id not in self.veiculos_fechados:
+                self.veiculos_fechados.append(veiculo_id)
+        if not nao_saiu and veiculo_id in self.veiculos_nao_sairam:
+            self.veiculos_nao_sairam.remove(veiculo_id)
+        if nao_saiu:
+            return True, f"{nome} marcado como NÃO SAIU: a carga vai para a próxima rota."
+        return True, f"{nome} voltou a contar como saído."
 
     def fechar_veiculo(self, veiculo_id: str, fechado: bool = True) -> tuple[bool, str]:
         nome = next((r.veiculo_nome for r in self.rotas if r.veiculo_id == veiculo_id), veiculo_id)
@@ -490,6 +532,9 @@ class MotorLogistica:
                     "id_item": p.get("id_item", ""),
                     "of_ano": p.get("of_ano", ""),
                     "obs_recebimento": p.get("obs_recebimento", ""),
+                    "entrega_em": p.get("entrega_em", ""),
+                    "entrega_cliente_codigo": p.get("entrega_cliente_codigo", ""),
+                    "pendente_desde": p.get("pendente_desde", ""),
                     "data_producao": p.get("data_producao", ""),
                     "parte": str(p.get("parte", "")),
                     "divisao_automatica": str(p.get("divisao_automatica", "") or ""),
@@ -527,6 +572,9 @@ class MotorLogistica:
                     "id_item": p.get("id_item", ""),
                     "of_ano": p.get("of_ano", ""),
                     "obs_recebimento": p.get("obs_recebimento", ""),
+                    "entrega_em": p.get("entrega_em", ""),
+                    "entrega_cliente_codigo": p.get("entrega_cliente_codigo", ""),
+                    "pendente_desde": p.get("pendente_desde", ""),
                     "data_producao": p.get("data_producao", ""),
                     "parte": str(p.get("parte", "")),
                     "divisao_automatica": str(p.get("divisao_automatica", "") or ""),
@@ -1093,6 +1141,9 @@ class MotorLogistica:
             parte=str(pedido.get("parte", "") or ""),
             divisao_automatica=str(pedido.get("divisao_automatica", "") or ""),
             obs_recebimento=str(pedido.get("obs_recebimento", "") or ""),
+            entrega_em=str(pedido.get("entrega_em", "") or ""),
+            entrega_cliente_codigo=str(pedido.get("entrega_cliente_codigo", "") or ""),
+            pendente_desde=str(pedido.get("pendente_desde", "") or ""),
             data_producao=str(pedido.get("data_producao", "") or ""),
             peso_total_linha=_float(pedido.get("peso_total_linha")),
             cliente=pedido["cliente"],
@@ -1181,6 +1232,7 @@ class MotorLogistica:
             },
             "viagens_retorno_habilitadas": list(self.viagens_retorno_habilitadas),
             "veiculos_fechados": list(self.veiculos_fechados),
+            "veiculos_nao_sairam": list(self.veiculos_nao_sairam),
             "equipe_por_veiculo": dict(self.equipe_por_veiculo),
             "metricas_retorno": metricas_retorno,
         }
@@ -1391,6 +1443,9 @@ class MotorLogistica:
                     "id_item": pedido_dict.get("id_item", ""),
                     "of_ano": pedido_dict.get("of_ano", ""),
                     "obs_recebimento": pedido_dict.get("obs_recebimento", ""),
+                    "entrega_em": pedido_dict.get("entrega_em", ""),
+                    "entrega_cliente_codigo": pedido_dict.get("entrega_cliente_codigo", ""),
+                    "pendente_desde": pedido_dict.get("pendente_desde", ""),
                     "data_producao": pedido_dict.get("data_producao", ""),
                     "parte": str(pedido_dict.get("parte", "")),
                     "divisao_automatica": str(pedido_dict.get("divisao_automatica", "") or ""),
@@ -1411,6 +1466,9 @@ class MotorLogistica:
                     "id_item": pedido_dict.get("id_item", ""),
                     "of_ano": pedido_dict.get("of_ano", ""),
                     "obs_recebimento": pedido_dict.get("obs_recebimento", ""),
+                    "entrega_em": pedido_dict.get("entrega_em", ""),
+                    "entrega_cliente_codigo": pedido_dict.get("entrega_cliente_codigo", ""),
+                    "pendente_desde": pedido_dict.get("pendente_desde", ""),
                     "data_producao": pedido_dict.get("data_producao", ""),
                     "parte": str(pedido_dict.get("parte", "")),
                     "divisao_automatica": str(pedido_dict.get("divisao_automatica", "") or ""),
@@ -1438,6 +1496,9 @@ class MotorLogistica:
                     "id_item": pedido_dict.get("id_item", ""),
                     "of_ano": pedido_dict.get("of_ano", ""),
                     "obs_recebimento": pedido_dict.get("obs_recebimento", ""),
+                    "entrega_em": pedido_dict.get("entrega_em", ""),
+                    "entrega_cliente_codigo": pedido_dict.get("entrega_cliente_codigo", ""),
+                    "pendente_desde": pedido_dict.get("pendente_desde", ""),
                     "data_producao": pedido_dict.get("data_producao", ""),
                     "parte": str(pedido_dict.get("parte", "")),
                     "divisao_automatica": str(pedido_dict.get("divisao_automatica", "") or ""),
@@ -1465,6 +1526,9 @@ class MotorLogistica:
                     "id_item": pedido_dict.get("id_item", ""),
                     "of_ano": pedido_dict.get("of_ano", ""),
                     "obs_recebimento": pedido_dict.get("obs_recebimento", ""),
+                    "entrega_em": pedido_dict.get("entrega_em", ""),
+                    "entrega_cliente_codigo": pedido_dict.get("entrega_cliente_codigo", ""),
+                    "pendente_desde": pedido_dict.get("pendente_desde", ""),
                     "data_producao": pedido_dict.get("data_producao", ""),
                     "parte": str(pedido_dict.get("parte", "")),
                     "divisao_automatica": str(pedido_dict.get("divisao_automatica", "") or ""),
@@ -1610,6 +1674,9 @@ class MotorLogistica:
                 "id_item": pedido_dict.get("id_item", ""),
                 "of_ano": pedido_dict.get("of_ano", ""),
                 "obs_recebimento": pedido_dict.get("obs_recebimento", ""),
+                "entrega_em": pedido_dict.get("entrega_em", ""),
+                "entrega_cliente_codigo": pedido_dict.get("entrega_cliente_codigo", ""),
+                "pendente_desde": pedido_dict.get("pendente_desde", ""),
                 "data_producao": pedido_dict.get("data_producao", ""),
                 "parte": str(pedido_dict.get("parte", "")),
                 "divisao_automatica": str(pedido_dict.get("divisao_automatica", "") or ""),
@@ -1638,6 +1705,9 @@ class MotorLogistica:
             "id_item": entry.get("id_item", ""),
             "of_ano": entry.get("of_ano", ""),
             "obs_recebimento": entry.get("obs_recebimento", ""),
+            "entrega_em": entry.get("entrega_em", ""),
+            "entrega_cliente_codigo": entry.get("entrega_cliente_codigo", ""),
+            "pendente_desde": entry.get("pendente_desde", ""),
             "data_producao": entry.get("data_producao", ""),
             "parte": str(entry.get("parte", "")),
             "divisao_automatica": str(entry.get("divisao_automatica", "") or ""),

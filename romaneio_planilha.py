@@ -268,6 +268,8 @@ def gerar_romaneio_planilha(
     for v in veiculos:
         for i in v["itens"] + v["itens_retorno"]:
             texto = str(i.get("obs_recebimento") or "").strip()
+            if i.get("entrega_em"):
+                texto = f"ENTREGAR EM {i['entrega_em']}" + (f" | {texto}" if texto else "")
             chave = f"{i.get('cliente_codigo')}|{texto}"
             if texto and chave not in vistos:
                 vistos.add(chave)

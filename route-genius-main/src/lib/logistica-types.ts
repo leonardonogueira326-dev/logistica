@@ -21,7 +21,24 @@ export interface PedidoConsolidado {
   liberacao_comercial_por?: string;
   liberacao_comercial_em?: string;
   liberacao_comercial_obs?: string;
+  transportadora?: string;
+  transportadora_codigo?: string;
+  frete_conferido?: string;
+  frete_conferido_em?: string;
+  /** Conferência linha a linha: só linha conferida vai para o Kanban */
+  conferida?: string;
+  conferida_em?: string;
+  /** Por que virou retira/coleta (calculado no servidor) */
+  evidencia_frete?: string;
+  evidencia_nivel?: "VERDE" | "VERMELHO" | "";
   obs_recebimento?: string;
+  /** Remessa / NF triangular: entrega física em outra empresa */
+  entrega_em?: string;
+  /** Remessa p/ industrialização: ida (peso 0) ou volta (com peso) */
+  industrializacao?: string;
+  entrega_cliente_codigo?: string;
+  /** Veio de um dia anterior sem sair (data ISO do 1º dia pendente) */
+  pendente_desde?: string;
   /** Calculado pela API: CONSULTA_REPRESENTANTE, PAGAMENTO_ANTECIPADO, PESO_ZERADO */
   pendencias?: Pendencia[];
   motivo_parado?: string;
@@ -176,6 +193,11 @@ export interface ItemRota {
   of_ano?: string;
   /** Horário/dia de recebimento do cliente ("SÓ ABRE AS 8:00") */
   obs_recebimento?: string;
+  /** Remessa / NF triangular: entrega física em outra empresa */
+  entrega_em?: string;
+  entrega_cliente_codigo?: string;
+  /** Veio de um dia anterior sem sair (data ISO do 1º dia pendente) */
+  pendente_desde?: string;
   data_producao?: string;
   /** "1/2", "2/2"... quando a linha foi dividida entre caminhões */
   parte?: string;
@@ -218,6 +240,8 @@ export interface RotaVeiculo {
 export interface Roteirizacao {
   /** Caminhões fechados pelo operador (a sugestão não mexe) */
   veiculos_fechados?: string[];
+  /** Caminhões que não saíram: a carga vai para a próxima rota */
+  veiculos_nao_sairam?: string[];
   /** Motorista/ajudante/placa por caminhão no dia (vai para o romaneio) */
   equipe_por_veiculo?: Record<string, EquipeVeiculo>;
   /** Resultado da última sugestão/montagem */
@@ -336,8 +360,9 @@ export type ConsolidadoPatch = Partial<
 
 export const STATUS_FRETE_OPCOES = [
   { value: "LIBERADO", label: "Liberado (frota própria)" },
-  { value: "RETIRA FOB", label: "Retira FOB" },
-  { value: "ENTREGA_TERCEIRO_HUB", label: "Redespacho (Hub terceiro)" },
+  { value: "ENTREGA_TERCEIRO_HUB", label: "Levar na transportadora" },
+  { value: "TERCEIRO", label: "Transportadora coleta" },
+  { value: "RETIRA FOB", label: "Cliente retira (FOB)" },
   { value: "BLOQUEIO FISCAL", label: "Bloqueio fiscal" },
 ] as const;
 

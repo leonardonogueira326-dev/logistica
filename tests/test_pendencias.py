@@ -54,16 +54,18 @@ def test_representante_liberou_resolve_e_nao_liberou_segue_parado():
     assert "NÃO liberou" in motivo_parado(nao)
 
 
-@pytest.mark.parametrize("status", [config.COD_LIBERADO, config.COD_RETIRA_FOB, config.COD_TERCEIRO])
-def test_pagamento_antecipado_vale_para_qualquer_frete(status):
+@pytest.mark.parametrize("status", [config.COD_LIBERADO, config.COD_TERCEIRO_HUB])
+def test_pagamento_antecipado_e_peso_zerado_quando_a_logistica_leva(status):
     assert PAGAMENTO_ANTECIPADO in pendencias(_linha(status=status, liberacao_comercial="AGUARDANDO"))
     assert PAGAMENTO_ANTECIPADO not in pendencias(_linha(status=status, liberacao_comercial="LIBERADO"))
-
-
-@pytest.mark.parametrize("status", [config.COD_LIBERADO, config.COD_RETIRA_FOB, config.COD_TERCEIRO])
-def test_peso_zerado_vale_para_qualquer_frete(status):
     assert PESO_ZERADO in pendencias(_linha(status=status, peso_kg=0))
     assert PESO_ZERADO not in pendencias(_linha(status=status, peso_kg=12.5))
+
+
+@pytest.mark.parametrize("status", [config.COD_RETIRA_FOB, config.COD_TERCEIRO])
+def test_retira_e_coleta_nao_tem_pendencia_da_logistica(status):
+    # Ex.: VR LIMP — transportadora coleta na fábrica, pagamento antecipado, peso 0
+    assert pendencias(_linha(status=status, liberacao_comercial="AGUARDANDO", peso_kg=0)) == []
 
 
 def test_pendencias_se_somam():

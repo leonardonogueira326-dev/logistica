@@ -1,6 +1,6 @@
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { Clock, Crosshair, GripVertical, MoreHorizontal } from "lucide-react";
+import { Clock, Crosshair, GripVertical, MoreHorizontal, Truck } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { idCarga, type ItemRota } from "@/lib/logistica-types";
 import { cn } from "@/lib/utils";
+import { textoPendenteDesde } from "@/lib/mensagens";
 
 export type CardPedido = ItemRota | Record<string, string>;
 
@@ -113,6 +114,20 @@ export function PedidoKanbanCard({
             {bairro && cidade ? ", " : ""}
             {cidade}
           </div>
+          {raw.pendente_desde && (
+            <div className="mt-1 inline-flex items-center gap-1 rounded bg-rose-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-rose-700">
+              <Clock className="w-3 h-3" /> {textoPendenteDesde(raw.pendente_desde)}
+            </div>
+          )}
+          {raw.entrega_em && (
+            <div
+              className="mt-1 flex items-start gap-1 rounded bg-violet-500/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-700"
+              title="Remessa: o material vai para outra empresa (veja a observação do pedido)"
+            >
+              <Truck className="w-3 h-3 shrink-0 mt-0.5" />
+              <span className="line-clamp-2">Entregar em: {raw.entrega_em}</span>
+            </div>
+          )}
           {raw.obs_recebimento && (
             <div className="mt-1 flex items-start gap-1 text-[11px] text-sky-700" title={raw.obs_recebimento}>
               <Clock className="w-3 h-3 shrink-0 mt-0.5" />

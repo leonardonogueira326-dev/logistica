@@ -53,6 +53,12 @@ class PedidoFaturamento:
     exige_syder: str = "NAO"
     bloco_bruto: str = ""
     erro_extracao: str = ""
+    entrega_em: str = ""
+    # Remessa p/ industrialização: ida (peso 0) ou volta (com peso)
+    industrializacao: str = ""
+    entrega_cliente_codigo: str = ""
+    # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
+    pendente_desde: str = ""
     latitude: Optional[float] = None
     longitude: Optional[float] = None
 
@@ -115,8 +121,24 @@ class PedidoConsolidado:
     liberacao_comercial_por: str = ""
     liberacao_comercial_em: str = ""
     liberacao_comercial_obs: str = ""
+    # Conferência de retira / coleta (a logística não leva, mas confere a leitura)
+    transportadora: str = ""
+    transportadora_codigo: str = ""
+    aprendizado_aplicado: str = "NAO"
+    frete_conferido: str = ""
+    frete_conferido_em: str = ""
+    # Conferência linha a linha: só linha conferida vai para o Kanban
+    conferida: str = ""
+    conferida_em: str = ""
     # Horário/dia de recebimento do cliente tirado da observação ("SÓ ABRE AS 8:00")
     obs_recebimento: str = ""
+    # Remessa / NF triangular: entrega física em outra empresa
+    entrega_em: str = ""
+    # Remessa p/ industrialização: ida (peso 0) ou volta (com peso)
+    industrializacao: str = ""
+    entrega_cliente_codigo: str = ""
+    # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
+    pendente_desde: str = ""
     cliente: str = ""
     cliente_codigo: str = ""
     peso_kg: float = 0.0
@@ -175,6 +197,13 @@ class ItemRota:
     # "SIM" enquanto a divisão feita pelo motor não foi conferida pelo operador
     divisao_automatica: str = ""
     obs_recebimento: str = ""
+    # Remessa / NF triangular: entrega física em outra empresa
+    entrega_em: str = ""
+    # Remessa p/ industrialização: ida (peso 0) ou volta (com peso)
+    industrializacao: str = ""
+    entrega_cliente_codigo: str = ""
+    # Veio de um dia anterior sem sair (data ISO do 1º dia em que ficou pendente)
+    pendente_desde: str = ""
     data_producao: str = ""
     cliente: str = ""
     cliente_codigo: str = ""

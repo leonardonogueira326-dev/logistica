@@ -30,7 +30,9 @@ from api.schemas import (  # noqa: E402
     ConsultaRepresentanteResponseSchema,
     DividirCargaSchema,
     EquipeVeiculoSchema,
+    ConferirFreteBodySchema,
     FecharVeiculoSchema,
+    NaoSaiuSchema,
     MoverPedidoSchema,
     MoverPedidoResponseSchema,
     PedidoConsolidadoSchema,
@@ -69,6 +71,10 @@ from gerador_romaneio import (  # noqa: E402
     nome_arquivo_romaneio_caminhao,
 )
 from historico_manager import arquivar_sessao, chave_linha_solicitacao  # noqa: E402
+from conferencia_frete import carregar_memoria as carregar_memoria_frete  # noqa: E402
+from conferencia_frete import evidencia as evidencia_frete  # noqa: E402
+from conferencia_frete import lembrar as lembrar_conferencia_frete  # noqa: E402
+from virada_do_dia import juntar_ao_quadro_novo, pendentes_do_quadro  # noqa: E402
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -95,7 +101,10 @@ def _limite_consulta() -> int:
 
 
 def _consolidado_com_pendencias(
-    c: PedidoConsolidado, limite: int | None = None, geo: tuple[dict, dict] | None = None
+    c: PedidoConsolidado,
+    limite: int | None = None,
+    geo: tuple[dict, dict] | None = None,
+    memoria_frete: dict | None = None,
 ) -> PedidoConsolidadoSchema:
     limite = _limite_consulta() if limite is None else limite
     dados = asdict(c)
@@ -103,8 +112,14 @@ def _consolidado_com_pendencias(
         ponto = geocodificacao.coordenada_da_linha(dados, *geo)
         if ponto:
             dados["latitude"], dados["longitude"] = ponto["lat"], ponto["lon"]
+    texto_ev, nivel_ev = evidencia_frete(c, memoria_frete)
+    dados.pop("evidencia_frete", None)
     return PedidoConsolidadoSchema(
-        **dados, pendencias=calc_pendencias(c, limite), motivo_parado=motivo_parado(c, limite)
+        **dados,
+        pendencias=calc_pendencias(c, limite),
+        motivo_parado=motivo_parado(c, limite),
+        evidencia_frete=texto_ev,
+        evidencia_nivel=nivel_ev,
     )
 
 
@@ -224,6 +239,7 @@ def _motor_from_roteirizacao(data: dict[str, Any]) -> MotorLogistica:
     }
     motor.viagens_retorno_habilitadas = list(data.get("viagens_retorno_habilitadas", []))
     motor.veiculos_fechados = list(data.get("veiculos_fechados", []))
+    motor.veiculos_nao_sairam = list(data.get("veiculos_nao_sairam", []))
     motor.equipe_por_veiculo = dict(data.get("equipe_por_veiculo", {}))
     return motor
 
@@ -347,6 +363,8 @@ def ingest_session(
         store.save_ingestao(session_id, payload)
         store.update_meta(session_id, pdfs_ingeridos=[p.name for p in pdfs[:1]])
         avisos, erros, linhas_novas = motor.avisos, motor.erros, len(payload["consolidados"])
+        if not atual:
+            avisos = _trazer_do_dia_anterior(session_id, payload) + avisos
         # Outras listas que vieram juntas no mesmo upload entram em seguida.
         restantes = pdfs[1:]
     else:
@@ -367,10 +385,66 @@ def ingest_session(
         session_id=session_id,
         linhas_novas=linhas_novas,
         resumo=ResumoIngestaoSchema(**payload["resumo"]),
-        consolidados=[_consolidado_com_pendencias(c) for c in consolidados_ativos],
+        consolidados=[
+            _consolidado_com_pendencias(c, memoria_frete=mem)
+            for mem in [carregar_memoria_frete()]
+            for c in consolidados_ativos
+        ],
         avisos=avisos,
         erros=erros,
     )
+
+
+def _ids_no_quadro(rote: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    grupos = [*rote.get("itens_por_veiculo", {}).values(), *rote.get("itens_retorno_por_veiculo", {}).values()]
+    grupos += [rote.get(k, []) for k in ("backlog", "backlog_futuro", "backlog_local", "coletas")]
+    for itens in grupos:
+        for it in itens:
+            ids.add(str(it.get("id_item") or it.get("numero_pedido") or "").split("@")[0])
+    return ids
+
+
+def _quadro_anterior(session_id: str, data_ref: str) -> str:
+    """Quadro do dia mais recente ANTES desta data (o "ontem" deste quadro)."""
+    candidatos = [
+        q for q in store.listar_quadros(500)
+        if q["session_id"] != session_id and q.get("data_referencia") and q["data_referencia"] < data_ref
+    ]
+    if not candidatos:
+        return ""
+    candidatos.sort(key=lambda q: (q["data_referencia"], q.get("atualizado_em", "")), reverse=True)
+    return candidatos[0]["session_id"]
+
+
+def _trazer_do_dia_anterior(session_id: str, payload: dict[str, Any]) -> list[str]:
+    """Quadro novo: o que não saiu no dia anterior entra aqui com 'pendente desde'."""
+    consolidados = payload.get("consolidados", [])
+    data_ref = next((c.get("data_referencia") for c in consolidados if c.get("data_referencia")), "")
+    anterior = _quadro_anterior(session_id, data_ref) if data_ref else ""
+    if not anterior:
+        return []
+    try:
+        dados = (
+            store.load_consolidados_validados(anterior) if store.is_validated(anterior) else None
+        ) or store.load_ingestao(anterior) or {}
+        pendentes = pendentes_do_quadro(dados.get("consolidados", []), store.load_roteirizacao(anterior))
+    except Exception as exc:  # noqa: BLE001 — virada não pode impedir o dia novo
+        return [f"Não consegui trazer as pendências do dia anterior: {exc}"]
+    if not pendentes:
+        return []
+    feriados = carregar_parametros().get("feriados_extras", [])
+    juntos, trazidas, herdadas = juntar_ao_quadro_novo(consolidados, pendentes, data_ref, feriados)
+    payload["consolidados"] = juntos
+    payload.setdefault("resumo", {})["consolidados"] = str(len(juntos))
+    store.save_ingestao(session_id, payload)
+    store.update_meta(session_id, quadro_anterior=anterior)
+    partes = []
+    if trazidas:
+        partes.append(f"{trazidas} linha(s) que não saíram no dia anterior entraram neste quadro")
+    if herdadas:
+        partes.append(f"{herdadas} linha(s) do PDF novo já estavam pendentes antes")
+    return ["Virada do dia: " + "; ".join(partes) + "."]
 
 
 def _chave_linha(c: dict[str, Any]) -> str:
@@ -416,11 +490,9 @@ def _adicionar_lista_ao_quadro(
         except Exception:  # noqa: BLE001
             pass
 
-    rote = store.load_roteirizacao(session_id)
-    if novas and rote:
-        quadro = _motor_from_roteirizacao(rote)
-        quadro.incluir_linhas_novas([_dict_to_consolidado(c) for c in novas])
-        store.save_roteirizacao(session_id, quadro.para_dict())
+    # Linhas novas esperam a conferência: entram no quadro quando o operador der o ✓.
+    if novas:
+        aviso += " Confira as linhas novas para elas irem para o Kanban."
     return len(novas), [aviso, *motor.avisos], motor.erros
 
 
@@ -448,7 +520,11 @@ def list_consolidados(session_id: str) -> ConsolidadosListSchema:
         session_id=session_id,
         validated=validated,
         resumo=resumo,
-        consolidados=[_consolidado_com_pendencias(c, geo=geo) for c in consolidados],
+        consolidados=[
+            _consolidado_com_pendencias(c, geo=geo, memoria_frete=mem)
+            for mem in [carregar_memoria_frete()]
+            for c in consolidados
+        ],
         avisos=avisos if isinstance(avisos, list) else [],
     )
 
@@ -529,6 +605,13 @@ def confirmar_validacao(
     if not ingest:
         raise HTTPException(status_code=404, detail="Ingestão não executada.")
 
+    faltam = [c for c in ingest.get("consolidados", []) if c.get("conferida") != "SIM"]
+    if faltam and not store.is_validated(session_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Faltam {len(faltam)} linha(s) para conferir antes de montar as cargas.",
+        )
+
     regras_salvas = 0
     memoria_salva = 0
     if body and body.regras_novas:
@@ -599,12 +682,19 @@ def roteirizar(session_id: str, recomecar: bool = False) -> RoteirizacaoSchema:
     `recomecar=true` apaga o quadro e monta tudo de novo.
     """
     try:
-        _, consolidados, _ = _get_active_consolidados(session_id)
+        _, consolidados, validado = _get_active_consolidados(session_id)
     except SessionNotFoundError:
         raise HTTPException(status_code=404, detail="Sessão não encontrada.")
     except HTTPException:
         raise
+    if not validado:
+        # Nada vai para os caminhões sem o operador conferir a lista.
+        raise HTTPException(
+            status_code=409,
+            detail="A leitura ainda não foi conferida. Confira a lista em Conferência e clique em 'Montar cargas'.",
+        )
 
+    consolidados = [c for c in consolidados if c.conferida == "SIM"]
     existente = store.load_roteirizacao(session_id)
     if existente and not recomecar:
         motor = _motor_from_roteirizacao(existente)
@@ -760,6 +850,12 @@ def definir_equipe(session_id: str, veiculo_id: str, body: EquipeVeiculoSchema) 
 def fechar_veiculo(session_id: str, veiculo_id: str, body: FecharVeiculoSchema) -> MoverPedidoResponseSchema:
     """Caminhão fechado: a sugestão automática não coloca nem tira nada dele."""
     return _operar_divisao(session_id, lambda m: m.fechar_veiculo(veiculo_id, body.fechado))
+
+
+@router.post("/{session_id}/veiculos/{veiculo_id}/nao-saiu", response_model=MoverPedidoResponseSchema)
+def marcar_nao_saiu(session_id: str, veiculo_id: str, body: NaoSaiuSchema) -> MoverPedidoResponseSchema:
+    """Motorista faltou / caminhão quebrou: a carga passa para o próximo dia."""
+    return _operar_divisao(session_id, lambda m: m.marcar_nao_saiu(veiculo_id, body.nao_saiu))
 
 
 @router.get("/{session_id}/roteirizacao", response_model=RoteirizacaoSchema)
@@ -1018,6 +1114,51 @@ def registrar_consulta_representante(
     return ConsultaRepresentanteResponseSchema(
         ok=atualizados > 0, atualizados=atualizados, message=msg, alocados=alocados
     )
+
+
+@router.post("/{session_id}/conferir", response_model=ConsultaRepresentanteResponseSchema)
+@router.post("/{session_id}/conferir-frete", response_model=ConsultaRepresentanteResponseSchema)
+def conferir_frete(session_id: str, body: ConferirFreteBodySchema) -> ConsultaRepresentanteResponseSchema:
+    """
+    Conferência linha a linha: o operador confere a linha (ou desfaz).
+    Só linha conferida vai para o Kanban. Se o quadro já está montado, a linha
+    conferida agora entra nele (fila / parados), sem mexer no resto.
+    """
+    try:
+        store.session_path(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada.")
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    agora = datetime.now(timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
+    memoria = carregar_memoria_frete()
+    tocadas, vermelhas, entram = 0, [], []
+    for id_linha in body.ids:
+        ref = next((c for c in consolidados if mesma_linha(c, id_linha)), None)
+        if not ref:
+            continue
+        if body.conferido and evidencia_frete(ref, memoria)[1] == "VERMELHO":
+            vermelhas.append(ref)
+        marca = "SIM" if body.conferido else ""
+        quando = agora if body.conferido else ""
+        patch = {"conferida": marca, "conferida_em": quando, "frete_conferido": marca, "frete_conferido_em": quando}
+        if _patch_consolidado_session(session_id, ref.id_item or id_linha, patch):
+            tocadas += 1
+            if body.conferido and ref.conferida != "SIM":
+                ref.conferida = "SIM"
+                entram.append(ref)
+    aprendidas = lembrar_conferencia_frete(vermelhas) if vermelhas else 0
+    rote = store.load_roteirizacao(session_id)
+    if entram and rote and store.is_validated(session_id):
+        no_quadro = _ids_no_quadro(rote)
+        novas = [c for c in entram if (c.id_item or c.numero_pedido) not in no_quadro]
+        if novas:
+            quadro = _motor_from_roteirizacao(rote)
+            quadro.incluir_linhas_novas(novas)
+            store.save_roteirizacao(session_id, quadro.para_dict())
+    msg = f"{tocadas} linha(s) {'conferida(s)' if body.conferido else 'voltaram para conferir'}."
+    if aprendidas:
+        msg += f" Aprendi {aprendidas} combinação(ões) cliente + transportadora."
+    return ConsultaRepresentanteResponseSchema(ok=True, atualizados=tocadas, message=msg)
 
 
 @router.post("/{session_id}/liberacao-comercial", response_model=ConsultaRepresentanteResponseSchema)

@@ -5,6 +5,8 @@ Enriquece pedidos com cadastro mestre de clientes (Ref. 8).
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
@@ -28,6 +30,7 @@ from extrator_pdf import (
     tipo_frete_padrao_superfine,
 )
 from memoria_operacional import consultar_memoria
+from destino_entrega import detectar_entrega, detectar_remessa_por_item, rotulo as rotulo_entrega
 from models import (
     EventoEmail,
     PedidoConsolidado,
@@ -181,13 +184,56 @@ class MotorIngestao:
 
             for pedido in self.pedidos_pdf:
                 self._aplicar_classificacao_frete(pedido)
+                remessa = self._aplicar_remessa_industrializacao(pedido)
                 self.enriquecer_cadastro_mestre(pedido)
+                if remessa:
+                    self._aplicar_destino(pedido, remessa, "remessa para industrialização")
+                    pedido.rota_logistica = resolver_rota_logistica(pedido.cidade_destino, self.params)
             self.consolidados = self._consolidar()
 
         except Exception as exc:
             self.erros.append(f"Falha no motor de ingestão: {exc}")
 
         return self.consolidados
+
+    def _aplicar_remessa_industrializacao(self, pedido: PedidoFaturamento) -> dict | None:
+        """
+        "ITEM 5 remessa FORT" na observação:
+        - peso ZERADO: o material vai para o terceiro industrializar -> logística leva
+          até a empresa (mesmo com "RETIRA NA FABRICA" no Transp);
+        - COM peso: já voltou industrializado -> segue o frete normal da linha.
+        """
+        remessa = detectar_remessa_por_item(
+            pedido.observacao_comercial, pedido.numero_pedido, self._lookup_clientes
+        )
+        if not remessa:
+            return None
+        if pedido.peso_kg > 0:
+            pedido.industrializacao = f"Voltou da industrialização ({remessa['nome']}) — segue para o cliente"
+            return None
+        pedido.industrializacao = f"Remessa para industrialização: {remessa['nome']}"
+        pedido.tipo_frete = "ENTREGA_DIRETA"
+        pedido.status_ia = config.STATUS_IA_NAO_APLICAVEL
+        return remessa
+
+    def _aplicar_entrega_em_outro_endereco(self, pedido: PedidoFaturamento) -> None:
+        """Remessa / NF triangular: o caminhão vai até a empresa indicada na observação."""
+        destino = detectar_entrega(pedido.observacao_comercial, self._lookup_clientes)
+        if destino:
+            self._aplicar_destino(pedido, destino, "observação do pedido")
+
+    def _aplicar_destino(self, pedido: PedidoFaturamento, destino: dict, origem: str) -> None:
+        if not destino.get("cidade"):
+            pedido.entrega_em = f"{destino['nome']} — endereço não encontrado na base, confira"
+            self.avisos.append(f"{pedido.numero_pedido}: entregar em {destino['nome']} ({origem}) — sem endereço.")
+            return
+        pedido.entrega_em = rotulo_entrega(destino)
+        pedido.entrega_cliente_codigo = destino.get("codigo", "")
+        pedido.cidade = pedido.cidade_destino = normalizar_texto(destino["cidade"])
+        pedido.bairro = pedido.bairro_destino = normalizar_texto(destino.get("bairro", ""))
+        pedido.cep = pedido.cep_destino = destino.get("cep", "")
+        pedido.latitude = pedido.longitude = None
+        self.avisos.append(f"{pedido.numero_pedido}: entregar em {pedido.entrega_em} ({origem}).")
 
     def enriquecer_cadastro_mestre(self, pedido: PedidoFaturamento) -> None:
         """
@@ -226,7 +272,25 @@ class MotorIngestao:
                 )
                 return
 
-            if mestre and pedido.tipo_frete not in ("RETIRA_FOB", "ENTREGA_TERCEIRO"):
+            def _so_letras(t: str) -> str:
+                return re.sub(r"[^A-Z]", "", normalizar_texto(t or ""))
+
+            destino_pdf = pedido.cidade_destino
+            outro_destino = (
+                mestre is not None
+                and destino_pdf
+                and mestre.get("cidade")
+                and _so_letras(destino_pdf) != _so_letras(mestre["cidade"])
+            )
+            if mestre and outro_destino and pedido.tipo_frete not in ("RETIRA_FOB", "ENTREGA_TERCEIRO"):
+                # O pedido diz para onde vai: vale mais que o endereço do cadastro.
+                pedido.representante = mestre["representante"]
+                pedido.enriquecido_mestre = "NAO"
+                self.avisos.append(
+                    f"{pedido.numero_pedido}: destino do pedido ({destino_pdf}) diferente do cadastro "
+                    f"({mestre['cidade']}) — usei o do pedido."
+                )
+            elif mestre and pedido.tipo_frete not in ("RETIRA_FOB", "ENTREGA_TERCEIRO"):
                 pedido.bairro = mestre["bairro"]
                 pedido.bairro_destino = mestre["bairro"]
                 pedido.cidade = mestre["cidade"]
@@ -252,9 +316,15 @@ class MotorIngestao:
                         f"não encontrado no cadastro mestre."
                     )
 
+            if pedido.industrializacao.startswith("Remessa"):
+                pass  # destino da remessa é aplicado depois do cadastro (executar)
+            elif pedido.tipo_frete not in ("RETIRA_FOB", "ENTREGA_TERCEIRO"):
+                self._aplicar_entrega_em_outro_endereco(pedido)
+
             cidade_rota = pedido.cidade_destino or normalizar_texto(pedido.cidade)
             pedido.rota_logistica = resolver_rota_logistica(cidade_rota, self.params)
-            self._aplicar_cadastro_geolocalizado(pedido)
+            if not pedido.entrega_em:
+                self._aplicar_cadastro_geolocalizado(pedido)
         except Exception as exc:
             self.avisos.append(f"Enriquecimento {pedido.numero_pedido}: {exc}")
 
@@ -405,6 +475,12 @@ class MotorIngestao:
                     estado=pedido.estado_destino or pedido.estado,
                     bairro=pedido.bairro_destino or pedido.bairro,
                     cidade_destino=pedido.cidade_destino or normalizar_texto(pedido.cidade),
+                    entrega_em=pedido.entrega_em,
+                    industrializacao=pedido.industrializacao,
+                    transportadora=pedido.transportadora,
+                    transportadora_codigo=pedido.transportadora_codigo,
+                    aprendizado_aplicado=pedido.aprendizado_aplicado,
+                    entrega_cliente_codigo=pedido.entrega_cliente_codigo,
                     estado_destino=pedido.estado_destino or normalizar_texto(pedido.estado),
                     bairro_destino=pedido.bairro_destino or normalizar_texto(pedido.bairro),
                     cep=pedido.cep or pedido.cep_destino,
