@@ -330,7 +330,7 @@ class ExtratorPDF:
         saida: list[str] = []
         with pdfplumber.open(self.caminho_pdf) as pdf:
             for num_pag, pagina in enumerate(pdf.pages, start=1):
-                palavras = pagina.extract_words(keep_blank_chars=False)
+                palavras = pagina.extract_words(keep_blank_chars=False, extra_attrs=["size"])
                 cab = [
                     w for w in palavras
                     if w["text"].startswith("Observa") and w["x0"] > pagina.width * 0.4
@@ -356,7 +356,12 @@ class ExtratorPDF:
                 campo_estruturado = False
                 for linha in linhas_visuais:
                     esq = " ".join(w["text"] for w in sorted(linha, key=lambda w: w["x0"]) if w["x0"] < x_obs)
-                    dir_ = " ".join(w["text"] for w in sorted(linha, key=lambda w: w["x0"]) if w["x0"] >= x_obs)
+                    # Texto miúdo das colunas do meio (Parcelas: 5522,58 / 5522,58 / …) às vezes
+                    # transborda para dentro da coluna Observação: fonte menor -> não é observação.
+                    dir_ = " ".join(
+                        w["text"] for w in sorted(linha, key=lambda w: w["x0"])
+                        if w["x0"] >= x_obs and float(w.get("size") or 8) >= 7.5
+                    )
                     esq, dir_ = esq.strip(), dir_.strip()
 
                     if esq and self._linha_ignoravel(esq):
@@ -371,6 +376,8 @@ class ExtratorPDF:
                             saida.append(f"{MARCADOR_OF}{of_coluna}")
                     if not dir_:
                         continue
+                    if re.match(r"^(Qtde\.?\s*Itens|Pre[çc]o\s+Total|Observa[çc][õo]es:)", dir_, re.IGNORECASE):
+                        break  # totais do fim do relatório, não é observação de linha
                     if re.match(r"^(Representante:|Destino:|Transp:)", dir_, re.IGNORECASE):
                         campo_estruturado = True
                     if campo_estruturado:
