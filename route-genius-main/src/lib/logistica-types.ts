@@ -371,7 +371,10 @@ export type ConsolidadoPatch = Partial<
     PedidoConsolidado,
     "cliente" | "bairro" | "cidade" | "cep" | "representante" | "status"
   >
->;
+> & {
+  /** Apelido da empresa (FORT, LAP) = levar para industrializar; "" desfaz. */
+  remessa_industrializacao?: string;
+};
 
 export const STATUS_FRETE_OPCOES = [
   { value: "LIBERADO", label: "Liberado (frota própria)" },
@@ -380,6 +383,37 @@ export const STATUS_FRETE_OPCOES = [
   { value: "RETIRA FOB", label: "Cliente retira (FOB)" },
   { value: "BLOQUEIO FISCAL", label: "Bloqueio fiscal" },
 ] as const;
+
+/** Empresas que industrializam (remessa: a logística leva o material até lá). */
+export const EMPRESAS_INDUSTRIALIZACAO = [
+  { value: "FORT", label: "Fort Laminação" },
+  { value: "LAP", label: "LAP (Laminação Aços Paulínia)" },
+] as const;
+export const PREFIXO_REMESSA = "Remessa para industrialização";
+const IND = "IND:";
+
+/** Caixa de frete da conferência: os fretes + "levar para industrializar". */
+export const OPCOES_SELETOR_FRETE: { value: string; label: string }[] = [
+  ...STATUS_FRETE_OPCOES,
+  ...EMPRESAS_INDUSTRIALIZACAO.map((e) => ({ value: `${IND}${e.value}`, label: `Industrialização — levar na ${e.label}` })),
+];
+
+/** Empresa da remessa desta linha ("" se não é remessa para industrialização). */
+export function empresaRemessa(c: Pick<PedidoConsolidado, "industrializacao">): string {
+  const t = c.industrializacao ?? "";
+  return t.startsWith(PREFIXO_REMESSA) ? t.split(":").pop()!.trim() : "";
+}
+
+/** Valor da caixa de frete para a linha. */
+export function valorSeletorFrete(c: Pick<PedidoConsolidado, "industrializacao" | "status">): string {
+  const e = empresaRemessa(c);
+  return e ? `${IND}${e}` : c.status;
+}
+
+/** Valor escolhido na caixa -> empresa da remessa ("" se é um frete comum). */
+export function empresaDoSeletor(valor: string): string {
+  return valor.startsWith(IND) ? valor.slice(IND.length) : "";
+}
 
 export const SESSION_KEY = "sf_logistica_session_id";
 

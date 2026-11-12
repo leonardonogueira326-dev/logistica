@@ -77,6 +77,9 @@ from conferencia_frete import evidencia as evidencia_frete  # noqa: E402
 from conferencia_frete import lembrar as lembrar_conferencia_frete  # noqa: E402
 from frases import chave as chave_frase  # noqa: E402
 from frases import FRETE as SIG_FRETE  # noqa: E402
+from frases import INDUSTRIALIZACAO as SIG_INDUSTRIALIZACAO  # noqa: E402
+from destino_entrega import destino_remessa, empresas_remessa, rotulo as rotulo_entrega  # noqa: E402
+from extrator_clientes import obter_lookup_clientes  # noqa: E402
 from frases import analisar as analisar_frases  # noqa: E402
 from frases import carregar as carregar_frases  # noqa: E402
 from frases import ensinar as ensinar_frase  # noqa: E402
@@ -289,6 +292,54 @@ def _patch_consolidado_session(session_id: str, numero_pedido: str, patch: dict[
     else:
         store.save_ingestao(session_id, data)
     return True
+
+
+# Campos que a remessa para industrialização troca (para poder desfazer)
+_CAMPOS_DESTINO = (
+    "status", "tipo_frete", "cidade", "cidade_destino", "bairro", "bairro_destino", "cep", "cep_destino",
+    "entrega_em", "entrega_cliente_codigo", "rota_logistica", "industrializacao", "latitude", "longitude",
+    "enriquecido_mestre",
+)
+PREFIXO_REMESSA = "Remessa para industrialização"
+
+
+def _aplicar_remessa_na_linha(session_id: str, item: dict[str, Any], empresa: str, origem: str) -> None:
+    """A logística leva o material até a empresa que industrializa (peso zerado = ida)."""
+    empresa = normalizar_texto(empresa)
+    if empresa not in empresas_remessa():
+        raise HTTPException(status_code=400, detail=f"Empresa de industrialização desconhecida: {empresa}")
+    if "_antes_remessa" not in item:
+        item["_antes_remessa"] = {k: item[k] for k in _CAMPOS_DESTINO if k in item}
+    destino = destino_remessa(empresa, obter_lookup_clientes(str(store.session_path(session_id))))
+    item["status"] = config.COD_LIBERADO
+    item["tipo_frete"] = "ENTREGA_DIRETA"
+    item["industrializacao"] = f"{PREFIXO_REMESSA}: {empresa}"
+    if destino.get("cidade"):
+        item["entrega_em"] = rotulo_entrega(destino)
+        item["entrega_cliente_codigo"] = destino.get("codigo", "")
+        item["cidade"] = item["cidade_destino"] = normalizar_texto(destino["cidade"])
+        item["bairro"] = item["bairro_destino"] = normalizar_texto(destino.get("bairro", ""))
+        item["cep"] = item["cep_destino"] = destino.get("cep", "")
+        item["latitude"] = item["longitude"] = None
+        item["rota_logistica"] = resolver_rota_logistica(item["cidade_destino"], carregar_parametros())
+        item["enriquecido_mestre"] = "SIM"  # endereço da empresa veio da base de clientes
+    else:
+        item["entrega_em"] = f"{empresa} — endereço não encontrado na base, confira"
+    item["auditoria"] = (item.get("auditoria", "") + f" | REMESSA P/ INDUSTRIALIZAÇÃO ({empresa}) — {origem}").strip(" |")
+
+
+def _desfazer_remessa_na_linha(item: dict[str, Any]) -> None:
+    antes = item.pop("_antes_remessa", None)
+    if antes is not None:
+        for k in _CAMPOS_DESTINO:
+            if k in antes:
+                item[k] = antes[k]
+            else:
+                item.pop(k, None)
+    elif str(item.get("industrializacao", "")).startswith(PREFIXO_REMESSA):
+        item["industrializacao"] = ""
+        item["entrega_em"] = ""
+    item["auditoria"] = (item.get("auditoria", "") + " | REMESSA P/ INDUSTRIALIZAÇÃO DESFEITA").strip(" |")
 
 
 @router.get("", tags=["sessions"])
@@ -563,6 +614,7 @@ def patch_consolidado(
 
     item = ingest["consolidados"][found_idx]
     updates = patch.model_dump(exclude_none=True)
+    remessa_pedida = updates.pop("remessa_industrializacao", None)
 
     if updates.get("representante") and updates["representante"] != item.get("representante"):
         # O sistema aprende: próximas solicitações deste cliente já vêm com este nome.
@@ -574,6 +626,14 @@ def patch_consolidado(
         if key in ("bairro", "cidade", "cep"):
             dest_key = f"{key}_destino" if key != "cep" else "cep_destino"
             item[dest_key] = value
+
+    remessa = remessa_pedida
+    if remessa is not None:
+        if remessa:
+            _aplicar_remessa_na_linha(session_id, item, remessa, "escolhida na conferência")
+            updates.pop("status", None)
+        else:
+            _desfazer_remessa_na_linha(item)
 
     if "status" in updates:
         status = normalizar_texto(updates["status"])
@@ -1140,6 +1200,24 @@ def ensinar_frase_endpoint(session_id: str, body: EnsinarFraseBodySchema) -> Con
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     corrigidas = 0
+    if body.significado == SIG_INDUSTRIALIZACAO:
+        ingest = store.load_ingestao(session_id) or {}
+        for item in ingest.get("consolidados", []):
+            if item.get("conferida") == "SIM" or str(item.get("industrializacao", "")).startswith(PREFIXO_REMESSA):
+                continue
+            if not any(chave_frase(f) == body.chave for f in quebrar_frases(item.get("observacao_comercial", ""))):
+                continue
+            try:
+                peso = float(item.get("peso_kg") or 0)
+            except (TypeError, ValueError):
+                peso = 0.0
+            if peso > 0:
+                item["industrializacao"] = f"Voltou da industrialização ({body.status}) — segue para o cliente"
+            else:
+                _aplicar_remessa_na_linha(session_id, item, body.status, "frase ensinada")
+            corrigidas += 1
+        if corrigidas:
+            store.save_ingestao(session_id, ingest)
     if body.significado == SIG_FRETE:
         _, consolidados, _ = _get_active_consolidados(session_id)
         for c in consolidados:
@@ -1154,7 +1232,7 @@ def ensinar_frase_endpoint(session_id: str, body: EnsinarFraseBodySchema) -> Con
                     corrigidas += 1
     msg = "Frase aprendida."
     if corrigidas:
-        msg += f" {corrigidas} linha(s) deste quadro mudaram de frete."
+        msg += f" {corrigidas} linha(s) deste quadro foram ajustadas."
     return ConsultaRepresentanteResponseSchema(ok=True, atualizados=corrigidas, message=msg)
 
 

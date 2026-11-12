@@ -18,7 +18,12 @@ import type { FraseObservacao, PedidoConsolidado } from "@/lib/logistica-types";
 import {
   COD_PROCESSANDO_IA,
   COD_REVISAO_OBRIGATORIA,
+  EMPRESAS_INDUSTRIALIZACAO,
+  OPCOES_SELETOR_FRETE,
   STATUS_FRETE_OPCOES,
+  empresaDoSeletor,
+  empresaRemessa,
+  valorSeletorFrete,
   montarChaveMemoriaOperacional,
   montarChaveRegraAprendizado,
   palavraChaveParaAprendizado,
@@ -216,6 +221,28 @@ function PendenciasPage() {
     const id = idLinha(c);
     setDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] ?? c), ...campos } }));
     patchConsolidadoDebounced(sessionId, id, campos);
+  };
+
+  /** Caixa de frete: frete comum ou "levar para industrializar" (o servidor troca o destino). */
+  const mudarFrete = (c: PedidoConsolidado, valor: string) => {
+    if (!sessionId) return;
+    const id = idLinha(c);
+    const empresa = empresaDoSeletor(valor);
+    const eraRemessa = !!empresaRemessa(linha(c));
+    if (!empresa && !eraRemessa) {
+      patch(c, { status: valor });
+      return;
+    }
+    // Destino muda no servidor: mostra o que ele devolver (sem rascunho local)
+    setDrafts((prev) => {
+      const { [id]: _, ...resto } = prev;
+      return resto;
+    });
+    patchConsolidadoDebounced(
+      sessionId,
+      id,
+      empresa ? { remessa_industrializacao: empresa } : { remessa_industrializacao: "", status: valor },
+    );
   };
 
   const conferir = async (ids: string[], conferido = true) => {
@@ -458,9 +485,11 @@ function PendenciasPage() {
                   <td className="py-2 pr-3 text-right whitespace-nowrap font-mono">{kg(c.peso_kg)}</td>
                   <td className="py-2 pr-3">
                     {validado ? (
-                      <span className="text-xs">{ROTULO_FRETE[d.status] ?? d.status}</span>
+                      <span className="text-xs">
+                        {empresaRemessa(d) ? `Industrialização (${empresaRemessa(d)})` : ROTULO_FRETE[d.status] ?? d.status}
+                      </span>
                     ) : (
-                      <SeletorFrete valor={d.status} readonly={false} onChange={(status) => patch(c, { status })} />
+                      <SeletorFrete valor={valorSeletorFrete(d)} readonly={false} onChange={(v) => mudarFrete(c, v)} />
                     )}
                   </td>
                   <td className="py-2 pr-3">
@@ -589,6 +618,7 @@ function PendenciasPage() {
         salvarRegra={linhaAberta ? !!salvarRegras[idLinha(linhaAberta)] : false}
         onSalvarRegra={(v) => linhaAberta && setSalvarRegras((p) => ({ ...p, [idLinha(linhaAberta)]: v }))}
         onPatch={(campos) => linhaAberta && patch(linhaAberta, campos)}
+        onFrete={(v) => linhaAberta && mudarFrete(linhaAberta, v)}
         onClose={() => setAberta(null)}
       />
     </div>
@@ -618,7 +648,7 @@ function SeletorFrete({
   readonly: boolean;
   onChange: (v: string) => void;
 }) {
-  const conhecido = STATUS_FRETE_OPCOES.some((o) => o.value === valor);
+  const conhecido = OPCOES_SELETOR_FRETE.some((o) => o.value === valor);
   if (readonly) return <span className="text-xs">{valor || "—"}</span>;
   return (
     <span onClick={(e) => e.stopPropagation()}>
@@ -627,7 +657,7 @@ function SeletorFrete({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {STATUS_FRETE_OPCOES.map((o) => (
+          {OPCOES_SELETOR_FRETE.map((o) => (
             <SelectItem key={o.value} value={o.value} className="text-xs">
               {o.label}
             </SelectItem>
@@ -658,6 +688,7 @@ function DetalheLinha({
   salvarRegra,
   onSalvarRegra,
   onPatch,
+  onFrete,
   onClose,
 }: {
   c: PedidoConsolidado | null;
@@ -666,6 +697,7 @@ function DetalheLinha({
   salvarRegra: boolean;
   onSalvarRegra: (v: boolean) => void;
   onPatch: (campos: Partial<PedidoConsolidado>) => void;
+  onFrete: (valor: string) => void;
   onClose: () => void;
 }) {
   const info = (rotulo: string, valor?: string | number) => (
@@ -718,8 +750,8 @@ function DetalheLinha({
 
               <div className="space-y-1">
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Frete</div>
-                <SeletorFrete valor={draft.status} readonly={readonly} onChange={(status) => onPatch({ status })} />
-                {!readonly && draft.status !== c.status && (
+                <SeletorFrete valor={valorSeletorFrete(draft)} readonly={readonly} onChange={onFrete} />
+                {!readonly && draft.status !== c.status && !empresaRemessa(draft) && (
                   <label className="mt-2 flex items-start gap-2 text-xs">
                     <Checkbox checked={salvarRegra} onCheckedChange={(v) => onSalvarRegra(v === true)} />
                     <span>
@@ -780,7 +812,13 @@ const OPCOES_FRASE: { valor: string; rotulo: string; ajuda: string }[] = [
   { valor: "FATURAR_APOS", rotulo: "Prazo: só faturar a partir da data", ajuda: "A data é lida da frase em cada pedido." },
   { valor: "ENTREGAR_ATE", rotulo: "Prazo: entregar até a data", ajuda: "Avisa e fica vermelho se o prazo passou." },
   { valor: "AVISAR", rotulo: "Sempre me avisar", ajuda: "Mostra a frase toda vez (embalagem, parcial, ligar para alguém…)." },
+  {
+    valor: "INDUSTRIALIZACAO",
+    rotulo: "Remessa para industrialização",
+    ajuda: "Peso zerado: a logística leva até a empresa escolhida. Com peso: já voltou, segue o frete da linha.",
+  },
 ];
+const PRECISA_ESCOLHA: Record<string, boolean> = { FRETE: true, INDUSTRIALIZACAO: true };
 
 function EnsinarFrase({
   frase,
@@ -825,7 +863,10 @@ function EnsinarFrase({
                     name="significado"
                     className="mt-1"
                     checked={significado === o.valor}
-                    onChange={() => setSignificado(o.valor)}
+                    onChange={() => {
+                      setSignificado(o.valor);
+                      if (o.valor !== significado) setStatus(o.valor === frase.sugestao ? frase.sugestao_status || "" : "");
+                    }}
                   />
                   <span>
                     <span className="block text-sm font-medium">
@@ -858,13 +899,30 @@ function EnsinarFrase({
                 </select>
               </label>
             )}
+            {significado === "INDUSTRIALIZACAO" && (
+              <label className="block text-sm">
+                <span className="text-xs text-muted-foreground">Empresa que industrializa</span>
+                <select
+                  className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                >
+                  <option value="">Escolha…</option>
+                  {EMPRESAS_INDUSTRIALIZACAO.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="flex justify-end gap-2">
               <button type="button" className="rounded-md border px-4 py-2 text-sm" onClick={onClose}>
                 Cancelar
               </button>
               <button
                 type="button"
-                disabled={ocupado || !significado || (significado === "FRETE" && !status)}
+                disabled={ocupado || !significado || (PRECISA_ESCOLHA[significado] && !status)}
                 className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground disabled:opacity-50"
                 onClick={() => void onSalvar(significado, status)}
               >
