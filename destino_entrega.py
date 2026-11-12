@@ -161,3 +161,63 @@ def detectar_remessa_por_item(
         return {"nome": nome, "cidade": "", "bairro": "", "cep": "", "codigo": "", "triangular": triangular,
                 "origem": "observacao"}
     return None
+
+
+# --------------------------------------------------------------- remessa sem número de item
+# "REMRESSA P/ MÃO DE OBRA NA FORT LAMINACAO - Trefilar"  (vale para todos os itens do pedido)
+_RE_REMESSA_PALAVRA = re.compile(r"\bREM+R?E?S+A\b|\bINDUSTRIALIZ")
+_RE_PARTES = re.compile(r"\s-\s|\.\s|;\s|\n")
+
+
+def empresas_remessa() -> list[str]:
+    """Apelidos das empresas que industrializam (opções da caixa de frete)."""
+    return list(APELIDOS_REMESSA)
+
+
+def empresa_citada(frase: str) -> str:
+    """Apelido da empresa de industrialização citada na frase ('' se nenhuma)."""
+    p = _plano(frase)
+    for apelido, nome in APELIDOS_REMESSA.items():
+        if re.search(rf"\b{re.escape(apelido)}\b", p) or nome in p:
+            return apelido
+    return ""
+
+
+def eh_frase_de_remessa(frase: str) -> bool:
+    return bool(_RE_REMESSA_PALAVRA.search(_plano(frase)))
+
+
+def destino_remessa(apelido: str, base: dict[str, dict[str, Any]] | None = None) -> dict[str, str]:
+    """Endereço da empresa de industrialização (pela base de clientes)."""
+    nome = _plano(apelido)
+    busca = APELIDOS_REMESSA.get(nome, nome)
+    reg = _na_base(busca, base, todos=True)
+    if reg:
+        return {
+            "nome": nome,
+            "cidade": _plano(str(reg.get("cidade") or "")),
+            "bairro": _plano(str(reg.get("bairro") or "")),
+            "cep": str(reg.get("cep") or ""),
+            "codigo": str(reg.get("codigo") or ""),
+            "triangular": "NAO",
+            "origem": "base",
+        }
+    return {"nome": nome, "cidade": "", "bairro": "", "cep": "", "codigo": "", "triangular": "NAO",
+            "origem": "observacao"}
+
+
+def detectar_remessa_geral(observacao: str, base: dict[str, dict[str, Any]] | None = None) -> dict[str, str] | None:
+    """
+    Remessa citada sem número de item ("REMESSA P/ MÃO DE OBRA NA FORT"): vale para o
+    pedido inteiro. Se a observação separa por item ("ITEM 5 remessa FORT"), quem decide
+    é detectar_remessa_por_item — aqui não mexe.
+    """
+    obs = _plano(observacao)
+    if _RE_REMESSA_ITEM.search(obs):
+        return None
+    for parte in _RE_PARTES.split(obs):
+        if eh_frase_de_remessa(parte):
+            apelido = empresa_citada(parte)
+            if apelido:
+                return destino_remessa(apelido, base)
+    return None

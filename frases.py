@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from destino_entrega import empresa_citada, empresas_remessa, eh_frase_de_remessa
+
 ARQUIVO = Path(__file__).resolve().parent / "data" / "frases_conhecidas.json"
 
 IGNORAR = "IGNORAR"
@@ -28,7 +30,8 @@ FRETE = "FRETE"
 FATURAR_APOS = "FATURAR_APOS"
 ENTREGAR_ATE = "ENTREGAR_ATE"
 AVISAR = "AVISAR"
-SIGNIFICADOS = (IGNORAR, FRETE, FATURAR_APOS, ENTREGAR_ATE, AVISAR)
+INDUSTRIALIZACAO = "INDUSTRIALIZACAO"  # status = apelido da empresa (FORT, LAP)
+SIGNIFICADOS = (IGNORAR, FRETE, FATURAR_APOS, ENTREGAR_ATE, AVISAR, INDUSTRIALIZACAO)
 
 # status do consolidado <-> tipo de frete do classificador
 STATUS_PARA_TIPO = {
@@ -111,10 +114,12 @@ def ensinar(
         raise ValueError(f"Significado inválido: {significado}")
     if significado == FRETE and status not in STATUS_PARA_TIPO:
         raise ValueError("Para 'muda o frete' escolha o frete.")
+    if significado == INDUSTRIALIZACAO and status not in empresas_remessa():
+        raise ValueError("Para 'remessa para industrialização' escolha a empresa.")
     dic = carregar(caminho)
     dic[k] = {
         "significado": significado,
-        "status": status if significado == FRETE else "",
+        "status": status if significado in (FRETE, INDUSTRIALIZACAO) else "",
         "exemplo": exemplo[:200],
         "em": datetime.now().strftime("%d/%m/%Y"),
     }
@@ -142,6 +147,8 @@ def sugestao(frase: str) -> tuple[str, str]:
     from extrator_pdf import classificar_frete_com_confianca
 
     p = _plano(frase)
+    if eh_frase_de_remessa(frase) or "MAO DE OBRA" in p:
+        return INDUSTRIALIZACAO, empresa_citada(frase)
     if datas(frase):
         if _RE_FATURAR_APOS.search(p):
             return FATURAR_APOS, ""
@@ -171,6 +178,15 @@ def analisar(observacao: str, dic: dict[str, dict[str, Any]] | None = None) -> l
         if conhecida:
             item.update(situacao="OPERADOR", significado=conhecida["significado"],
                         status=conhecida.get("status", ""), ensinada_em=conhecida.get("em", ""))
+        elif eh_frase_de_remessa(frase):
+            # Remessa para industrialização: o sistema entende sozinho quando a empresa
+            # é conhecida; senão pergunta (nunca ignora — muda para onde o material vai).
+            empresa = empresa_citada(frase)
+            if empresa:
+                item.update(situacao="REGRA", significado=INDUSTRIALIZACAO, status=empresa)
+            else:
+                item.update(situacao="NOVA", significado="", status="",
+                            sugestao=INDUSTRIALIZACAO, sugestao_status="")
         else:
             sig, st = sugestao(frase)
             plano = _plano(frase)
@@ -197,4 +213,12 @@ def frete_ensinado(observacao: str, dic: dict[str, dict[str, Any]] | None = None
     for f in analisar(observacao, dic):
         if f["situacao"] == "OPERADOR" and f["significado"] == FRETE and f.get("status"):
             return STATUS_PARA_TIPO.get(f["status"], "")
+    return ""
+
+
+def industrializacao_ensinada(observacao: str, dic: dict[str, dict[str, Any]] | None = None) -> str:
+    """Empresa de industrialização ensinada pelo operador para alguma frase ('' se nenhuma)."""
+    for f in analisar(observacao, dic):
+        if f["situacao"] == "OPERADOR" and f["significado"] == INDUSTRIALIZACAO and f.get("status"):
+            return f["status"]
     return ""

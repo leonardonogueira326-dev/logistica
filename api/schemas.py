@@ -98,6 +98,9 @@ class ConsolidadoPatchSchema(BaseModel):
     cep: Optional[str] = None
     representante: Optional[str] = None
     status: Optional[str] = None
+    # Remessa para industrialização escolhida na caixa de frete: apelido da empresa
+    # (FORT, LAP) — a logística leva até lá. "" desfaz e volta o destino original.
+    remessa_industrializacao: Optional[str] = None
 
 
 class ResumoIngestaoSchema(BaseModel):

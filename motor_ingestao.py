@@ -30,8 +30,14 @@ from extrator_pdf import (
     tipo_frete_padrao_superfine,
 )
 from memoria_operacional import consultar_memoria
-from frases import carregar as carregar_frases, frete_ensinado
-from destino_entrega import detectar_entrega, detectar_remessa_por_item, rotulo as rotulo_entrega
+from frases import carregar as carregar_frases, frete_ensinado, industrializacao_ensinada
+from destino_entrega import (
+    destino_remessa,
+    detectar_entrega,
+    detectar_remessa_geral,
+    detectar_remessa_por_item,
+    rotulo as rotulo_entrega,
+)
 from models import (
     EventoEmail,
     PedidoConsolidado,
@@ -195,7 +201,7 @@ class MotorIngestao:
                     pedido.tipo_frete = ensinado
                     pedido.aprendizado_aplicado = "SIM"
                     pedido.status_ia = config.STATUS_IA_NAO_APLICAVEL
-                remessa = self._aplicar_remessa_industrializacao(pedido)
+                remessa = self._aplicar_remessa_industrializacao(pedido, dicionario)
                 self.enriquecer_cadastro_mestre(pedido)
                 if remessa:
                     self._aplicar_destino(pedido, remessa, "remessa para industrialização")
@@ -207,16 +213,24 @@ class MotorIngestao:
 
         return self.consolidados
 
-    def _aplicar_remessa_industrializacao(self, pedido: PedidoFaturamento) -> dict | None:
+    def _aplicar_remessa_industrializacao(
+        self, pedido: PedidoFaturamento, dicionario: dict | None = None
+    ) -> dict | None:
         """
-        "ITEM 5 remessa FORT" na observação:
+        "ITEM 5 remessa FORT", "REMESSA P/ MÃO DE OBRA NA FORT" ou frase que o operador
+        ensinou como remessa para industrialização:
         - peso ZERADO: o material vai para o terceiro industrializar -> logística leva
           até a empresa (mesmo com "RETIRA NA FABRICA" no Transp);
         - COM peso: já voltou industrializado -> segue o frete normal da linha.
         """
-        remessa = detectar_remessa_por_item(
-            pedido.observacao_comercial, pedido.numero_pedido, self._lookup_clientes
-        )
+        obs = pedido.observacao_comercial
+        remessa = detectar_remessa_por_item(obs, pedido.numero_pedido, self._lookup_clientes)
+        if not remessa:
+            remessa = detectar_remessa_geral(obs, self._lookup_clientes)
+        if not remessa:
+            empresa = industrializacao_ensinada(obs, dicionario)
+            if empresa:
+                remessa = destino_remessa(empresa, self._lookup_clientes)
         if not remessa:
             return None
         if pedido.peso_kg > 0:
