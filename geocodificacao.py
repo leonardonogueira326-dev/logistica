@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from normalizador import normalizar_codigo_cliente, normalizar_texto
+import transportadoras
 
 RAIZ = Path(__file__).resolve().parent
 ARQUIVO_CACHE = RAIZ / "data" / "geocache.json"
@@ -164,8 +165,16 @@ def geocodificar_cliente(
 
 # ------------------------------------------------------------------- uso nas linhas
 def chave_da_linha(linha: dict[str, Any], base: dict[str, dict[str, str]] | None = None) -> str:
-    """Cliente (se a entrega é na cidade do cadastro) ou a cidade de destino do PDF."""
+    """Cliente (se a entrega é na cidade do cadastro) ou a cidade de destino do PDF.
+    Levar na transportadora: a própria transportadora (endereço da base ou do PDF)."""
     base = enderecos_base() if base is None else base
+    if linha.get("tipo_frete") == "ENTREGA_TERCEIRO_HUB" or linha.get("status") == "ENTREGA_TERCEIRO_HUB":
+        info = transportadoras.endereco_transportadora(
+            str(linha.get("transportadora_codigo") or ""), str(linha.get("transportadora") or "")
+        )
+        if info.get("cidade"):
+            return f"TRP:{info.get('codigo') or normalizar_texto(info.get('nome', ''))}"
+        return ""
     entrega = normalizar_codigo_cliente(str(linha.get("entrega_cliente_codigo", "") or ""))
     if entrega and entrega in base:  # remessa: empresa de entrega está na base
         return chave_cliente(entrega)
@@ -194,7 +203,7 @@ def geocodificar_linhas(
     pendentes: dict[str, dict[str, Any]] = {}
     for linha in linhas:
         chave = chave_da_linha(linha, base)
-        if chave not in cache and chave not in pendentes:
+        if chave and chave not in cache and chave not in pendentes:
             pendentes[chave] = linha
     estado = {"total": len(pendentes), "feitos": 0, "nao_achados": [], "erro": ""}
     for chave, linha in pendentes.items():
@@ -203,6 +212,11 @@ def geocodificar_linhas(
             if chave.startswith("CLI:"):
                 endereco = base.get(chave[4:], {})
                 achado = geocodificar_cliente(endereco, uf, buscar)
+            elif chave.startswith("TRP:"):
+                info = transportadoras.endereco_transportadora(
+                    str(linha.get("transportadora_codigo") or ""), str(linha.get("transportadora") or "")
+                )
+                achado = geocodificar_cliente(info, info.get("uf") or uf, buscar)
             else:
                 cidade = chave[4:].split("|")[0]
                 achado = geocodificar_cliente({"cidade": cidade}, uf, buscar)

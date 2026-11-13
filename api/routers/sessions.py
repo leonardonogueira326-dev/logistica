@@ -80,6 +80,7 @@ from frases import FRETE as SIG_FRETE  # noqa: E402
 from frases import INDUSTRIALIZACAO as SIG_INDUSTRIALIZACAO  # noqa: E402
 from destino_entrega import destino_remessa, empresas_remessa, rotulo as rotulo_entrega  # noqa: E402
 from extrator_clientes import obter_lookup_clientes  # noqa: E402
+from transportadoras import campos_da_linha as campos_transportadora, endereco_transportadora  # noqa: E402
 from frases import analisar as analisar_frases  # noqa: E402
 from frases import carregar as carregar_frases  # noqa: E402
 from frases import ensinar as ensinar_frase  # noqa: E402
@@ -340,6 +341,33 @@ def _desfazer_remessa_na_linha(item: dict[str, Any]) -> None:
         item["industrializacao"] = ""
         item["entrega_em"] = ""
     item["auditoria"] = (item.get("auditoria", "") + " | REMESSA P/ INDUSTRIALIZAÇÃO DESFEITA").strip(" |")
+
+
+_CAMPOS_HUB = (
+    "entrega_em", "entrega_cliente_codigo", "cidade_destino", "cidade", "bairro_destino", "bairro", "cep_destino",
+    "estado_destino", "enriquecido_mestre", "latitude", "longitude", "obs_recebimento", "rota_logistica",
+)
+
+
+def _levar_na_transportadora(item: dict[str, Any], params: dict[str, Any]) -> None:
+    """Frete trocado para 'Levar na transportadora': o destino passa a ser a transportadora."""
+    if "_antes_hub" not in item:
+        item["_antes_hub"] = {k: item[k] for k in _CAMPOS_HUB if k in item}
+    info = endereco_transportadora(str(item.get("transportadora_codigo") or ""), str(item.get("transportadora") or ""))
+    item.update(campos_transportadora(info, params))
+    if not info.get("horario"):
+        item["obs_recebimento"] = ""
+
+
+def _desfazer_transportadora(item: dict[str, Any]) -> None:
+    antes = item.pop("_antes_hub", None)
+    if antes is None:
+        return
+    for k in _CAMPOS_HUB:
+        if k in antes:
+            item[k] = antes[k]
+        else:
+            item.pop(k, None)
 
 
 @router.get("", tags=["sessions"])
@@ -646,11 +674,16 @@ def patch_consolidado(
             config.COD_TERCEIRO_HUB: "ENTREGA_TERCEIRO_HUB",
             config.COD_BLOQUEIO_FISCAL: "",
         }
+        era_hub = item.get("tipo_frete") == "ENTREGA_TERCEIRO_HUB"
         if status in tipo_map:
             item["tipo_frete"] = tipo_map[status]
         item["auditoria"] = (
             (item.get("auditoria", "") + " | STATUS AJUSTADO NA VALIDAÇÃO").strip(" |")
         )
+        if status == config.COD_TERCEIRO_HUB and not era_hub:
+            _levar_na_transportadora(item, params)
+        elif era_hub and status != config.COD_TERCEIRO_HUB:
+            _desfazer_transportadora(item)
 
     if "cidade" in updates:
         cidade = normalizar_texto(item.get("cidade_destino") or item.get("cidade", ""))
@@ -801,7 +834,7 @@ def iniciar_geocodificacao(session_id: str, background_tasks: BackgroundTasks) -
         return _geocodificando[session_id]
     linhas = _linhas_do_quadro(session_id)
     base, cache = geocodificacao.enderecos_base(), geocodificacao.carregar_cache()
-    faltam = len({geocodificacao.chave_da_linha(l, base) for l in linhas} - set(cache))
+    faltam = len({geocodificacao.chave_da_linha(l, base) for l in linhas} - set(cache) - {""})
     estado = {"rodando": faltam > 0, "total": faltam, "feitos": 0, "nao_achados": [], "erro": ""}
     _geocodificando[session_id] = estado
 
@@ -822,7 +855,7 @@ def iniciar_geocodificacao(session_id: str, background_tasks: BackgroundTasks) -
 def status_geocodificacao(session_id: str) -> dict[str, Any]:
     linhas = _linhas_do_quadro(session_id)
     base, cache = geocodificacao.enderecos_base(), geocodificacao.carregar_cache()
-    chaves = {geocodificacao.chave_da_linha(l, base) for l in linhas}
+    chaves = {geocodificacao.chave_da_linha(l, base) for l in linhas} - {""}
     return {
         **_geocodificando.get(session_id, {"rodando": False}),
         "clientes": len(chaves),

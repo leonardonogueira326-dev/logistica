@@ -43,7 +43,10 @@ const ehRetiraOuColeta = (c: PedidoConsolidado) => c.status === "RETIRA FOB" || 
 
 const idLinha = (c: PedidoConsolidado) => c.id_item || c.numero_pedido_norm || c.numero_pedido;
 const temPend = (c: PedidoConsolidado, p: string) => (c.pendencias ?? []).includes(p as never);
-const cidadeDe = (c: PedidoConsolidado) => c.cidade_destino || c.cidade;
+const ehLevarNaTransportadora = (c: PedidoConsolidado) =>
+  c.status === "ENTREGA_TERCEIRO_HUB" || c.tipo_frete === "ENTREGA_TERCEIRO_HUB";
+const cidadeDe = (c: PedidoConsolidado) =>
+  ehLevarNaTransportadora(c) && c.enriquecido_mestre !== "HUB" ? "—" : c.cidade_destino || c.cidade;
 
 /** Por que esta linha precisa de um olhar na leitura do PDF (vazio = leitura ok). */
 function motivoLeitura(c: PedidoConsolidado): string {
@@ -64,6 +67,8 @@ function motivoLeitura(c: PedidoConsolidado): string {
   if (c.status === "BLOQUEIO FISCAL" || c.status === "TRAVADO COMERCIAL")
     return `${c.status}${c.motivo_bloqueio ? ` — ${c.motivo_bloqueio}` : ""}`;
   // Endereço só importa quando a logística entrega (retira / transportadora que coleta não)
+  if (ehLevarNaTransportadora(c) && c.enriquecido_mestre !== "HUB")
+    return `Transportadora sem endereço — cadastre o código ${c.transportadora_codigo?.replace(/^0+/, "") || "?"} na base de transportadoras`;
   const logisticaEntrega = c.status === "LIBERADO" || c.status === "ENTREGA_TERCEIRO_HUB";
   if (logisticaEntrega && c.enriquecido_mestre !== "SIM" && c.enriquecido_mestre !== "HUB")
     return "Cliente não encontrado na base — confira cidade e CEP";
@@ -140,7 +145,8 @@ function alertasDa(c: PedidoConsolidado): Alerta[] {
     });
   out.push(...alertasDasFrases(c));
   if (c.industrializacao) out.push({ texto: c.industrializacao, tom: "info" });
-  if (c.entrega_em) out.push({ texto: `Entregar em: ${c.entrega_em}`, tom: "info" });
+  if (c.entrega_em && !(ehLevarNaTransportadora(c) && c.enriquecido_mestre !== "HUB"))
+    out.push({ texto: `Entregar em: ${c.entrega_em}`, tom: "info" });
   return out;
 }
 
