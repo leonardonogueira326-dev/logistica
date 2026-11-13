@@ -16,7 +16,7 @@ if exist .git-dados (
 )
 set "REPO=https://github.com/leonardonogueira326-dev/logistica-dados.git"
 set "G=git --git-dir=.git-dados --work-tree=."
-set "PASTAS=base-de-clientes*.xlsx base-transportadoras*.xlsx data\*.json data\sessions data\historico dados_teste"
+set "PASTAS=base-de-clientes*.xlsx base-representantes*.xlsx base-transportadoras*.xlsx data\*.json data\sessions data\historico dados_teste"
 
 %G% init -q
 %G% config user.name "%COMPUTERNAME%"

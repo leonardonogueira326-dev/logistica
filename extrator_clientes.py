@@ -317,8 +317,10 @@ def carregar_cadastro(pasta_dados: Path) -> dict[str, dict[str, str]]:
 def _lookup_planilha_dados(path: Path) -> dict[str, dict[str, str]]:
     """
     base-de-clientes.xlsx (aba Dados, exportada pelo sistema da empresa):
-    CODIGO, RAZAO_SOCIAL, NOME_FANTASIA, CIDADE, UF, CODIGO_REPRESENTANTE, REPRESENTANTE_*.
-    Não tem endereço/CEP, mas é a mais atualizada (clientes novos).
+    CODIGO, RAZAO_SOCIAL, NOME_FANTASIA, ENDERECO, NUMERO, BAIRRO, COMPLEMENTO,
+    CIDADE, UF, CEP, TELEFONE, EMAIL, CODIGO_REPRESENTANTE, REPRESENTANTE_*, STATUS.
+    É a mais atualizada (clientes novos). Exportações antigas não traziam o
+    endereço: aí esses campos ficam vazios e a base1 completa.
     """
     try:
         df = pd.read_excel(path, sheet_name="Dados", dtype=str)
@@ -334,15 +336,20 @@ def _lookup_planilha_dados(path: Path) -> dict[str, dict[str, str]]:
         if not chave:
             continue
         rep = normalizar_texto(pega(row, "REPRESENTANTE_FANTASIA") or pega(row, "REPRESENTANTE_RAZAO"))
+        rua, numero = normalizar_texto(pega(row, "ENDERECO")), pega(row, "NUMERO")
+        if rua and numero and numero.upper() not in ("0", "S/N", "SN"):
+            rua = f"{rua}, {normalizar_texto(numero)}"
         lookup[chave] = {
             "codigo": chave,
             "razao_social": normalizar_texto(pega(row, "RAZAO_SOCIAL")),
             "nome_fantasia": normalizar_texto(pega(row, "NOME_FANTASIA")),
-            "endereco": "",
-            "bairro": "",
+            "endereco": rua,
+            "bairro": normalizar_texto(pega(row, "BAIRRO")),
             "cidade": normalizar_texto(pega(row, "CIDADE")),
             "estado": normalizar_texto(pega(row, "UF")),
-            "cep": "",
+            "cep": pega(row, "CEP"),
+            "telefone": pega(row, "TELEFONE"),
+            "status_cliente": normalizar_texto(pega(row, "STATUS")),
             "representante_codigo": pega(row, "CODIGO_REPRESENTANTE"),
             "representante_nome": rep,
             "representante": rep,

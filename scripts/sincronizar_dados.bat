@@ -36,7 +36,7 @@ if not exist .git-dados exit /b 0
 set "G=git --git-dir=.git-dados --work-tree=."
 rem dentro de for /f ('...') o "=" precisa de ^
 set "GF=git --git-dir^=.git-dados --work-tree^=."
-set "PASTAS=base-de-clientes*.xlsx base-transportadoras*.xlsx data\*.json data\sessions data\historico dados_teste"
+set "PASTAS=base-de-clientes*.xlsx base-representantes*.xlsx base-transportadoras*.xlsx data\*.json data\sessions data\historico dados_teste"
 
 echo Sincronizando dados com o GitHub privado...
 for %%p in (%PASTAS%) do %G% add -A -f -- "%%p" >nul 2>&1

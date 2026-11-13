@@ -57,6 +57,7 @@ route-genius-main/*.local
 
 # Bases de clientes/transportadoras e dados derivados (dados da empresa — nunca versionar)
 base-de-clientes*.xlsx
+base-representantes*.xlsx
 base-transportadoras*.xlsx
 *.xlsx - *.csv
 data/cadastro_mestre_geolocalizado.json
