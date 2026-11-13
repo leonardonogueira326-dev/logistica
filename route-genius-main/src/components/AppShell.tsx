@@ -3,7 +3,16 @@ import { useEffect, useState } from "react";
 import { getStoredSessionId, setStoredSessionId } from "@/hooks/useLogisticaSession";
 import { Link, useRouterState } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { LayoutDashboard, Settings2, Upload, ClipboardCheck, TruckIcon, Radio } from "lucide-react";
+import {
+  LayoutDashboard,
+  Settings2,
+  Upload,
+  ClipboardCheck,
+  TruckIcon,
+  Radio,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HistoricoSearch } from "@/components/HistoricoSearch";
 
@@ -319,10 +328,34 @@ export function AppShell({ children }: { children: ReactNode }) {
   // é redesenhado (key) para marcar a tela certa.
   const [montado, setMontado] = useState(false);
   useEffect(() => setMontado(true), []);
+  // Barra lateral: o usuário esconde/mostra; a escolha fica guardada neste navegador.
+  const [menuOculto, setMenuOculto] = useState(false);
+  useEffect(() => {
+    try {
+      setMenuOculto(localStorage.getItem("sf_menu_oculto") === "1");
+    } catch {
+      /* navegador sem armazenamento: começa aberta */
+    }
+  }, []);
+  const alternarMenu = () => {
+    setMenuOculto((v) => {
+      try {
+        localStorage.setItem("sf_menu_oculto", v ? "0" : "1");
+      } catch {
+        /* sem armazenamento: vale só até recarregar */
+      }
+      return !v;
+    });
+  };
 
   return (
     <div className="flex min-h-screen w-full bg-background text-foreground">
-      <aside className="hidden md:flex w-64 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border">
+      <aside
+        className={cn(
+          "hidden w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border",
+          !menuOculto && "md:flex",
+        )}
+      >
         <div className="px-6 py-5 border-b border-sidebar-border">
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-lg bg-sidebar-primary flex items-center justify-center">
@@ -371,6 +404,19 @@ export function AppShell({ children }: { children: ReactNode }) {
         <AvisoSincronizacao />
         <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6">
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={alternarMenu}
+              title={menuOculto ? "Mostrar o menu lateral" : "Esconder o menu lateral"}
+              aria-label={menuOculto ? "Mostrar o menu lateral" : "Esconder o menu lateral"}
+              className="hidden md:inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              {menuOculto ? (
+                <PanelLeftOpen className="h-4 w-4" />
+              ) : (
+                <PanelLeftClose className="h-4 w-4" />
+              )}
+            </button>
             <StatusIA />
             <SeloVersao />
             <StatusSincronizacao />

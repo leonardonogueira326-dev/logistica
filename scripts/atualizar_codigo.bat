@@ -86,7 +86,7 @@ if exist "%LOCALAPPDATA%\logistica-ca\raizes-windows.pem" set "NPMCA=--cafile=%L
 pushd route-genius-main
 for /l %%i in (1,1,3) do (
   call npm install --no-audit --no-fund %NPMCA% >> "..\%CLOG%" 2>&1 && (popd & exit /b 0)
-  timeout /t 5 /nobreak >nul
+  ping -n 6 127.0.0.1 >nul
 )
 popd
 echo [AVISO] npm install falhou - veja logs\codigo.log >> "%CLOG%"

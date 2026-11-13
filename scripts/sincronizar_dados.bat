@@ -50,9 +50,20 @@ for /f "delims=" %%f in ('%GF% diff --name-only') do (
 )
 
 set "CONFLITO="
+rem Internet oscilando: tenta ate 3 vezes antes de dar erro
+set /a TENTATIVA=0
+:baixar
+set /a TENTATIVA+=1
 %G% pull -q --rebase origin main >> "%SLOG%" 2>&1
 if not errorlevel 1 goto enviar
-if not exist .git-dados\rebase-merge if not exist .git-dados\rebase-apply goto falhou
+if exist .git-dados\rebase-merge goto conflito
+if exist .git-dados\rebase-apply goto conflito
+if %TENTATIVA% GEQ 3 goto falhou
+echo tentando de novo em 10s ^(%TENTATIVA%/3^) >> "%SLOG%"
+ping -n 11 127.0.0.1 >nul
+goto baixar
+
+:conflito
 
 rem ---------- conflito: fica a versao deste PC, a da nuvem vai para logs\conflitos
 set /a VOLTAS=0
@@ -79,6 +90,10 @@ exit /b 1
 
 :enviar
 %G% push -q origin main >> "%SLOG%" 2>&1
+if errorlevel 1 (
+  ping -n 11 127.0.0.1 >nul
+  %G% push -q origin main >> "%SLOG%" 2>&1
+)
 if errorlevel 1 (
   > "%STATUS%" echo ERRO^|%AGORA%^|Recebi os dados da nuvem, mas nao consegui enviar os deste PC ^(internet ou login do GitHub^).
   echo [ATENCAO] Nao consegui enviar os dados ^(internet ou login do GitHub^).
