@@ -194,6 +194,8 @@ def _painel_veiculos(motor: MotorLogistica, session_id: str) -> dict[str, dict[s
                 pass
         painel[vid] = {
             "localizando": bool(sem_local) and bool(_geocodificando.get(session_id, {}).get("rodando")),
+            # por que ainda não localizou (sem internet / serviço de mapas bloqueado)
+            "erro_localizacao": (_geocodificando.get(session_id, {}).get("erro") or "") if sem_local else "",
             "agenda": agenda,
             "nome": nomes.get(vid, rota.veiculo_nome),
             "ordem_otimizada": motor.ordem_otimizada(vid),
