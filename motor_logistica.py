@@ -83,6 +83,9 @@ class MotorLogistica:
         self.veiculos_nao_sairam: list[str] = []
         # vid -> {motorista, ajudante, placa} (vai para o romaneio)
         self.equipe_por_veiculo: dict[str, dict[str, str]] = {}
+        # vid -> assinatura (ids na ordem) da última "Otimizar sequência";
+        # se a carga mudou depois, a ordem deixa de valer como otimizada.
+        self.sequencia_otimizada: dict[str, str] = {}
         self._cache_mapa_corredor: dict[str, int] = {}
 
     @staticmethod
@@ -602,6 +605,54 @@ class MotorLogistica:
         for seq, it in enumerate(itens, 1):
             it.sequencia_lifo = str(seq)
         self.itens_por_veiculo[veiculo_id] = itens
+
+    def assinatura_carga(self, veiculo_id: str) -> str:
+        """Ids das cargas do caminhão na ordem de entrega (muda se mexer na carga ou na ordem)."""
+        return "|".join(_cid(it) for it in self.itens_por_veiculo.get(veiculo_id, []))
+
+    def ordem_otimizada(self, veiculo_id: str) -> bool:
+        itens = self.itens_por_veiculo.get(veiculo_id, [])
+        if len({f"{it.cliente_codigo}|{it.cidade_destino}".upper() for it in itens}) < 2:
+            return True  # 0 ou 1 parada: não há ordem para otimizar
+        return self.sequencia_otimizada.get(veiculo_id) == self.assinatura_carga(veiculo_id)
+
+    def sugestao_corredor(self, veiculo_id: str, nomes: dict[str, str] | None = None) -> dict[str, Any]:
+        """
+        Caminhão com corredores misturados: quem é o "intruso" e para qual caminhão
+        aberto (do mesmo corredor do intruso) ele pode ir.
+        """
+        itens = [asdict(i) for i in self.itens_por_veiculo.get(veiculo_id, [])]
+        por_corredor: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for it in itens:
+            c = self._corredor_pedido(it)
+            if c is not None:
+                por_corredor[c].append(it)
+        if len(por_corredor) <= 1:
+            return {"texto": "", "ids": [], "destino": ""}
+        menor = min(por_corredor, key=lambda c: (sum(_float(i.get("peso_kg")) for i in por_corredor[c]),
+                                                  len(por_corredor[c])))
+        intrusos = por_corredor[menor]
+        apelidos = list(dict.fromkeys(self._apelido_cliente(str(i.get("cliente") or "")) for i in intrusos))
+        peso = sum(_float(i.get("peso_kg")) for i in intrusos)
+        nomes = nomes or {}
+        rotas = {r.veiculo_id: r for r in self.rotas}
+        for vid, outros in self.itens_por_veiculo.items():
+            if vid == veiculo_id or vid in self.veiculos_fechados or vid in self.veiculos_nao_sairam:
+                continue
+            dom = self._corredor_dominante([asdict(o) for o in outros]) if outros else None
+            rota = rotas.get(vid)
+            folga = (rota.capacidade_kg - rota.peso_alocado_kg) if rota else 0
+            if dom == menor and folga >= peso:
+                return {
+                    "texto": f"Sugestão: passar {', '.join(apelidos)} para {nomes.get(vid, vid)}",
+                    "ids": [_cid(i) for i in intrusos],
+                    "destino": vid,
+                }
+        return {
+            "texto": f"{', '.join(apelidos)} ({self._nome_corredor(menor)}) está fora do corredor deste caminhão",
+            "ids": [],
+            "destino": "",
+        }
 
     def tirar_do_caminhao_por_pendencia(self, id_item: str, motivo: str) -> str:
         """
@@ -1234,6 +1285,7 @@ class MotorLogistica:
             "veiculos_fechados": list(self.veiculos_fechados),
             "veiculos_nao_sairam": list(self.veiculos_nao_sairam),
             "equipe_por_veiculo": dict(self.equipe_por_veiculo),
+            "sequencia_otimizada": dict(self.sequencia_otimizada),
             "metricas_retorno": metricas_retorno,
         }
 

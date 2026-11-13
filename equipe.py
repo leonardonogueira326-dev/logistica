@@ -53,3 +53,39 @@ def equipe_inicial() -> dict[str, dict[str, str]]:
             "placa": str(v.get("placa", "") or ""),
         }
     return equipe
+
+
+ARQUIVO_NOMES = RAIZ / "data" / "equipe_nomes.json"
+
+
+def nomes_conhecidos() -> dict[str, list[str]]:
+    """Motoristas, ajudantes e placas já usados (lista para escolher na tela)."""
+    try:
+        dados = json.loads(ARQUIVO_NOMES.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        dados = {}
+    out = {k: [str(x) for x in dados.get(k, []) if str(x).strip()] for k in ("motoristas", "ajudantes", "placas")}
+    for vid, eq in carregar_padrao().items():  # equipes antigas também entram
+        for campo, lista in (("motorista", "motoristas"), ("ajudante", "ajudantes")):
+            nome = str(eq.get(campo, "") or "").strip().upper()
+            if nome and nome not in out[lista]:
+                out[lista].append(nome)
+    for v in frota_cadastrada():
+        placa = str(v.get("placa", "") or "").strip().upper()
+        if placa and placa not in out["placas"]:
+            out["placas"].append(placa)
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def guardar_nomes(equipe: dict[str, str]) -> None:
+    dados = nomes_conhecidos()
+    mudou = False
+    for campo, lista in (("motorista", "motoristas"), ("ajudante", "ajudantes"), ("placa", "placas")):
+        nome = str(equipe.get(campo, "") or "").strip().upper()
+        if nome and nome not in dados[lista]:
+            dados[lista].append(nome)
+            mudou = True
+    if mudou:
+        ARQUIVO_NOMES.parent.mkdir(parents=True, exist_ok=True)
+        ARQUIVO_NOMES.write_text(json.dumps({k: sorted(v) for k, v in dados.items()}, ensure_ascii=False, indent=2),
+                                 encoding="utf-8")

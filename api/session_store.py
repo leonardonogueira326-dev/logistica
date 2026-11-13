@@ -186,8 +186,48 @@ class SessionStore:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
 
-    def save_roteirizacao(self, session_id: str, data: dict[str, Any]) -> None:
-        self._write_json(session_id, "roteirizacao.json", data)
+    # ------------------------------------------------------------ desfazer
+    # Cada mudança no quadro guarda a versão anterior (só neste PC: fica fora
+    # da pasta de dados sincronizada). "Desfazer" volta uma versão.
+    LIMITE_DESFAZER = 20
+
+    def _arquivo_desfazer(self, session_id: str) -> Path:
+        base = Path(self.base_dir)
+        raiz = base.parent.parent if base.name == "sessions" else base
+        return raiz / ".desfazer" / f"{session_id}.json"
+
+    def _pilha_desfazer(self, session_id: str) -> list[dict[str, Any]]:
+        try:
+            dados = json.loads(self._arquivo_desfazer(session_id).read_text(encoding="utf-8"))
+            return dados if isinstance(dados, list) else []
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
+
+    def _gravar_pilha(self, session_id: str, pilha: list[dict[str, Any]]) -> None:
+        arq = self._arquivo_desfazer(session_id)
+        arq.parent.mkdir(parents=True, exist_ok=True)
+        arq.write_text(json.dumps(pilha[-self.LIMITE_DESFAZER:], ensure_ascii=False), encoding="utf-8")
+
+    def qtd_desfazer(self, session_id: str) -> int:
+        return len(self._pilha_desfazer(session_id))
+
+    def desfazer_roteirizacao(self, session_id: str) -> Optional[dict[str, Any]]:
+        with _lock_for(session_id):
+            pilha = self._pilha_desfazer(session_id)
+            if not pilha:
+                return None
+            anterior = pilha.pop()
+            self._gravar_pilha(session_id, pilha)
+            self._write_json(session_id, "roteirizacao.json", anterior)
+            return anterior
+
+    def save_roteirizacao(self, session_id: str, data: dict[str, Any], desfazivel: bool = True) -> None:
+        with _lock_for(session_id):
+            if desfazivel:
+                atual = self.load_roteirizacao(session_id)
+                if atual is not None and atual != data:
+                    self._gravar_pilha(session_id, self._pilha_desfazer(session_id) + [atual])
+            self._write_json(session_id, "roteirizacao.json", data)
 
     def load_roteirizacao(self, session_id: str) -> Optional[dict[str, Any]]:
         path = self._session_dir(session_id) / "roteirizacao.json"

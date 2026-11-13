@@ -91,3 +91,6 @@ data/conferencia_frete.json
 .git-dados/
 LEIA-ME-DADOS.md
 data/frases_conhecidas.json
+
+# Pilha do "Desfazer" da montagem de cargas (local de cada PC)
+.desfazer/

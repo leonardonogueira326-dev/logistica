@@ -1,15 +1,9 @@
 import L from "leaflet";
 import { useEffect, useMemo, useState } from "react";
-import {
-  MapContainer,
-  Marker,
-  Polyline,
-  TileLayer,
-  Tooltip,
-  useMap,
-} from "react-leaflet";
+import { MapContainer, Marker, Polyline, TileLayer, Tooltip, useMap } from "react-leaflet";
 
 import type { ItemRota, PedidoConsolidado, Roteirizacao } from "@/lib/logistica-types";
+import { CORES_CAMINHAO, chaveParada } from "@/lib/montagem";
 
 import "leaflet/dist/leaflet.css";
 
@@ -18,17 +12,6 @@ import icon from "leaflet/dist/images/marker-icon.png";
 import iconShadow from "leaflet/dist/images/marker-shadow.png";
 
 const BASE_AMERICANA: [number, number] = [-22.739, -47.331];
-
-const CORES_CAMINHAO = [
-  "#2563eb",
-  "#dc2626",
-  "#16a34a",
-  "#9333ea",
-  "#ea580c",
-  "#0891b2",
-  "#ca8a04",
-  "#be185d",
-];
 
 const COR_BACKLOG = "rgba(100, 100, 100, 0.72)";
 
@@ -49,6 +32,8 @@ type PontoMapa = {
   peso: number;
   cor: string;
   caminhao?: string;
+  /** Nº da parada no caminhão (o mesmo do quadro) */
+  numero?: number;
 };
 
 type RotaCaminhao = {
@@ -59,7 +44,15 @@ type RotaCaminhao = {
   marcadores: PontoMapa[];
 };
 
-function criarIconeCor(cor: string) {
+function criarIconeCor(cor: string, numero?: number) {
+  if (numero !== undefined) {
+    return L.divIcon({
+      className: "mapa-rota-marker",
+      html: `<div style="background:${cor};min-width:22px;height:22px;padding:0 4px;border-radius:11px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4);color:#fff;font:700 11px/18px system-ui,sans-serif;text-align:center">${numero}</div>`,
+      iconSize: [22, 22],
+      iconAnchor: [11, 11],
+    });
+  }
   return L.divIcon({
     className: "mapa-rota-marker",
     html: `<div style="background:${cor};width:16px;height:16px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.35)"></div>`,
@@ -150,10 +143,12 @@ function MapaRoteirizacaoInner({
   data,
   consolidadosByPedido,
   onCorrigir,
+  compacto,
 }: {
   data: Roteirizacao;
   consolidadosByPedido: Record<string, PedidoConsolidado>;
   onCorrigir?: (idItem: string, lat: number, lng: number) => void;
+  compacto?: boolean;
 }) {
   const { rotasCaminhao, pontosBacklog, bounds, semCoordenadas } = useMemo(() => {
     const rotas: RotaCaminhao[] = data.rotas.map((rota, idx) => {
@@ -164,17 +159,26 @@ function MapaRoteirizacaoInner({
 
       const marcadores: PontoMapa[] = [];
       const pontos: [number, number][] = [];
-
+      const nome = data.painel_veiculos?.[rota.veiculo_id]?.nome ?? rota.veiculo_nome;
+      const numeroDa: Record<string, number> = {};
+      for (const item of itens) {
+        const k = chaveParada(item);
+        if (!(k in numeroDa)) numeroDa[k] = Object.keys(numeroDa).length + 1;
+      }
+      const jaMarcado = new Set<string>();
       for (const item of todosItens) {
-        const ponto = itemParaPonto(item, cor, consolidadosByPedido, rota.veiculo_nome);
+        const ponto = itemParaPonto(item, cor, consolidadosByPedido, nome);
         if (!ponto) continue;
-        marcadores.push(ponto);
+        const k = chaveParada(item);
         pontos.push([ponto.lat, ponto.lng]);
+        if (jaMarcado.has(k)) continue; // um marcador por parada
+        jaMarcado.add(k);
+        marcadores.push({ ...ponto, numero: numeroDa[k] });
       }
 
       return {
         veiculoId: rota.veiculo_id,
-        veiculoNome: rota.veiculo_nome,
+        veiculoNome: nome,
         cor,
         pontos,
         marcadores,
@@ -202,7 +206,14 @@ function MapaRoteirizacaoInner({
         ...(data.itens_retorno_por_veiculo[rota.veiculoId] ?? []),
       ];
       for (const item of itens) {
-        if (!coordsDoPedido(item.id_item || item.numero_pedido, item.cliente, item.peso_kg, consolidadosByPedido)) {
+        if (
+          !coordsDoPedido(
+            item.id_item || item.numero_pedido,
+            item.cliente,
+            item.peso_kg,
+            consolidadosByPedido,
+          )
+        ) {
           missing += 1;
         }
       }
@@ -228,13 +239,10 @@ function MapaRoteirizacaoInner({
 
   return (
     <div className="space-y-3">
-      <div className="h-[70vh] w-full rounded-xl border overflow-hidden shadow-sm">
-        <MapContainer
-          center={BASE_AMERICANA}
-          zoom={11}
-          className="h-full w-full"
-          scrollWheelZoom
-        >
+      <div
+        className={`${compacto ? "h-[calc(100vh-260px)] min-h-[420px]" : "h-[70vh]"} w-full rounded-xl border overflow-hidden shadow-sm`}
+      >
+        <MapContainer center={BASE_AMERICANA} zoom={11} className="h-full w-full" scrollWheelZoom>
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -256,7 +264,7 @@ function MapaRoteirizacaoInner({
               <Marker
                 key={p.key}
                 position={[p.lat, p.lng]}
-                icon={criarIconeCor(p.cor)}
+                icon={criarIconeCor(p.cor, p.numero)}
                 draggable={!!onCorrigir}
                 eventHandlers={{
                   dragend: (e) => {
@@ -266,7 +274,7 @@ function MapaRoteirizacaoInner({
                 }}
               >
                 <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
-                  Pedido: {p.numeroPedido} | Cliente: {p.cliente} | Peso:{" "}
+                  {p.caminhao} · {p.numero}ª parada | {p.cliente} | Peso:{" "}
                   {p.peso.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg
                 </Tooltip>
               </Marker>
@@ -334,7 +342,13 @@ type StatusGeo = {
 };
 
 /** Localizar clientes (geocodificação em segundo plano) com progresso. */
-function BarraLocalizacao({ sessionId, onAtualizar }: { sessionId: string; onAtualizar: () => void }) {
+function BarraLocalizacao({
+  sessionId,
+  onAtualizar,
+}: {
+  sessionId: string;
+  onAtualizar: () => void;
+}) {
   const [status, setStatus] = useState<StatusGeo | null>(null);
   const consultar = async () => {
     const r = await fetch(`/api/sessions/${sessionId}/geocodificar`);
@@ -360,11 +374,13 @@ function BarraLocalizacao({ sessionId, onAtualizar }: { sessionId: string; onAtu
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-4 py-2 text-sm">
       <span>
-        <b>{status?.localizados ?? "…"}</b> de <b>{status?.clientes ?? "…"}</b> destinos localizados no mapa
+        <b>{status?.localizados ?? "…"}</b> de <b>{status?.clientes ?? "…"}</b> destinos localizados
+        no mapa
       </span>
       {status?.rodando ? (
         <span className="text-muted-foreground">
-          Localizando… {status.feitos ?? 0}/{status.total ?? 0} (cerca de 1,5 s por cliente, só na primeira vez)
+          Localizando… {status.feitos ?? 0}/{status.total ?? 0} (cerca de 1,5 s por cliente, só na
+          primeira vez)
         </span>
       ) : (
         faltam > 0 && (
@@ -379,14 +395,18 @@ function BarraLocalizacao({ sessionId, onAtualizar }: { sessionId: string; onAtu
       )}
       {status?.erro && <span className="text-destructive text-xs">{status.erro}</span>}
       {status?.sem_endereco_na_base && (
-        <span className="text-amber-700 text-xs">Coloque a base-de-clientes1.xlsx (com endereço) na pasta do sistema.</span>
+        <span className="text-amber-700 text-xs">
+          Coloque a base-de-clientes1.xlsx (com endereço) na pasta do sistema.
+        </span>
       )}
       {!!status?.nao_achados?.length && (
         <span className="text-amber-700 text-xs" title={status.nao_achados.join(", ")}>
           {status.nao_achados.length} não encontrado(s) — arraste o marcador para corrigir
         </span>
       )}
-      <span className="ml-auto text-xs text-muted-foreground">Posição errada? Arraste o marcador: o sistema guarda.</span>
+      <span className="ml-auto text-xs text-muted-foreground">
+        Posição errada? Arraste o marcador: o sistema guarda.
+      </span>
     </div>
   );
 }
@@ -396,11 +416,13 @@ export function MapaRoteirizacao({
   consolidadosByPedido,
   sessionId,
   onAtualizar,
+  compacto,
 }: {
   data: Roteirizacao;
   consolidadosByPedido: Record<string, PedidoConsolidado>;
   sessionId?: string;
   onAtualizar?: () => void;
+  compacto?: boolean;
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -426,7 +448,12 @@ export function MapaRoteirizacao({
   return (
     <div className="space-y-3">
       {sessionId && <BarraLocalizacao sessionId={sessionId} onAtualizar={() => onAtualizar?.()} />}
-      <MapaRoteirizacaoInner data={data} consolidadosByPedido={consolidadosByPedido} onCorrigir={corrigir} />
+      <MapaRoteirizacaoInner
+        data={data}
+        consolidadosByPedido={consolidadosByPedido}
+        onCorrigir={corrigir}
+        compacto={compacto}
+      />
     </div>
   );
 }

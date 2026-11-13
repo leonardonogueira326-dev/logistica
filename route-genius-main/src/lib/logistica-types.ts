@@ -275,6 +275,31 @@ export interface Roteirizacao {
     { teo_minutos: string; teo_hhmm: string; peso_alocado_kg: number; qtd_pedidos: string }
   >;
   jornada_maxima_minutos: number;
+  /** Por caminhão: nome sem ambiguidade, ordem otimizada, sem localização, sugestão de corredor */
+  painel_veiculos?: Record<string, PainelVeiculo>;
+  /** Motoristas, ajudantes e placas já usados */
+  equipe_nomes?: { motoristas?: string[]; ajudantes?: string[]; placas?: string[] };
+  /** Quantas mudanças dá para desfazer */
+  desfazer_disponivel?: number;
+}
+
+export interface PainelVeiculo {
+  nome: string;
+  ordem_otimizada: boolean;
+  /** id_carga das cargas sem localização no mapa */
+  sem_localizacao: string[];
+  sugestao_corredor: string;
+  sugestao_ids?: string[];
+  sugestao_destino?: string;
+}
+
+export interface MoverLoteRequest {
+  ids: string[];
+  destino: string;
+  motivo?: string;
+  forcar?: boolean;
+  liberar_representante?: boolean;
+  autorizado_por?: string;
 }
 
 export interface MoverPedidoRequest {
