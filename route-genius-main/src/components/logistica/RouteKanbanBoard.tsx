@@ -880,6 +880,7 @@ export function RouteKanbanBoard({
                     variant={col.variant}
                     embutida
                     propsCard={propsCard}
+                    alternarSelecao={alternarSelecao}
                     dataRef={Object.values(consolidadosByPedido)[0]?.data_referencia ?? ""}
                     onMoveTo={(destino, pedido) =>
                       requestMove([getCardId(pedido)], col.id, destino)
@@ -1345,9 +1346,11 @@ function KanbanColumn({
   onSalvarEquipe,
   embutida,
   propsCard,
+  alternarSelecao,
 }: {
   embutida?: boolean;
   propsCard?: PropsCardFn;
+  alternarSelecao?: (ids: string[]) => void;
   id: string;
   title: string;
   icon: typeof Truck;
@@ -1378,6 +1381,22 @@ function KanbanColumn({
   onSalvarEquipe?: (e: EquipeVeiculo) => Promise<void>;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id, data: { columnId: id } });
+  // Representantes abertos (a aba "Representante" começa com todos fechados)
+  const [abertos, setAbertos] = useState<Set<string>>(new Set());
+  const cardDe = (pedido: CardPedido) => (
+    <PedidoKanbanCard
+      key={`${id}::${getCardId(pedido)}`}
+      pedido={pedido}
+      columnId={id}
+      destinos={destinos}
+      variant={variant}
+      {...(propsCard?.(getCardId(pedido)) ?? {})}
+      onMoveTo={(dest) => onMoveTo(dest, pedido)}
+      onOpenAudit={onOpenAudit}
+      onAntecipar={onAntecipar}
+      onDivisao={divisaoDoCard(onDivisao, pedido)}
+    />
+  );
 
   const teoMin =
     isRetorno && veiculoBaseId
@@ -1585,42 +1604,36 @@ function KanbanColumn({
           embutida ? "max-h-[68vh]" : "max-h-[560px]",
         )}
       >
-        {items.map((pedido, idx) => (
-          <div key={`${id}::${getCardId(pedido)}`} className="space-y-2">
-            {variant === "futuro" &&
-              String(pedido.representante ?? "") !==
-                String(items[idx - 1]?.representante ?? "\u0000") && (
+        {variant === "futuro"
+          ? gruposRepresentante(items).map(({ rep, linhas }) => {
+              const ids = linhas.map(getCardId);
+              const achou = ids.some((i) => propsCard?.(i).destaque === "achou");
+              return (
                 <GrupoRepresentante
-                  rep={String(pedido.representante ?? "") || "NÃO IDENTIFICADO"}
-                  linhas={items.filter(
-                    (p) => String(p.representante ?? "") === String(pedido.representante ?? ""),
-                  )}
+                  key={rep}
+                  columnId={id}
+                  rep={rep}
+                  linhas={linhas}
                   dataRef={dataRef}
-                />
-              )}
-            <PedidoKanbanCard
-              key={`${id}::${getCardId(pedido)}`}
-              pedido={pedido}
-              columnId={id}
-              destinos={destinos}
-              variant={variant}
-              {...(propsCard?.(getCardId(pedido)) ?? {})}
-              onMoveTo={(dest) => onMoveTo(dest, pedido)}
-              onOpenAudit={onOpenAudit}
-              onAntecipar={onAntecipar}
-              onDivisao={
-                onDivisao
-                  ? {
-                      dividir: () => onDivisao.dividir(pedido),
-                      ajustar: () => onDivisao.ajustar(pedido),
-                      juntar: () => onDivisao.juntar(pedido),
-                      confirmar: () => onDivisao.confirmar(pedido),
-                    }
-                  : undefined
-              }
-            />
-          </div>
-        ))}
+                  aberto={abertos.has(rep) || achou}
+                  onToggle={() =>
+                    setAbertos((prev) => {
+                      const novo = new Set(prev);
+                      if (novo.has(rep)) novo.delete(rep);
+                      else novo.add(rep);
+                      return novo;
+                    })
+                  }
+                  apagado={!!propsCard && ids.every((i) => propsCard(i).destaque === "apagado")}
+                  achou={achou}
+                  selecionados={ids.filter((i) => propsCard?.(i).selecionado).length}
+                  onSelecionarTodos={alternarSelecao ? () => alternarSelecao(ids) : undefined}
+                >
+                  {linhas.map(cardDe)}
+                </GrupoRepresentante>
+              );
+            })
+          : items.map(cardDe)}
         {items.length === 0 && (
           <div className="text-xs text-center text-muted-foreground py-8 border border-dashed rounded-lg">
             {embutida ? "Vazio — solte cards aqui" : "Arraste pedidos aqui"}
@@ -1667,16 +1680,52 @@ function TeoBadge({ teoMin, teoLabel }: { teoMin: number; teoLabel: string }) {
   );
 }
 
-/** Cabeçalho de representante na coluna "Consultar representante". */
+/** Representantes na ordem da coluna, cada um com as suas linhas. */
+function gruposRepresentante(items: CardPedido[]) {
+  const grupos: { rep: string; linhas: CardPedido[] }[] = [];
+  for (const p of items) {
+    const rep = String(p.representante ?? "") || "NÃO IDENTIFICADO";
+    const g = grupos.find((x) => x.rep === rep);
+    if (g) g.linhas.push(p);
+    else grupos.push({ rep, linhas: [p] });
+  }
+  return grupos;
+}
+
+/**
+ * Caixa do representante na aba "Representante": fechada mostra nome, linhas e kg;
+ * clique abre os pedidos. A alça arrasta todas as linhas dele de uma vez.
+ */
 function GrupoRepresentante({
+  columnId,
   rep,
   linhas,
   dataRef,
+  aberto,
+  onToggle,
+  apagado,
+  achou,
+  selecionados,
+  onSelecionarTodos,
+  children,
 }: {
+  columnId: string;
   rep: string;
   linhas: CardPedido[];
   dataRef: string;
+  aberto: boolean;
+  onToggle: () => void;
+  apagado?: boolean;
+  achou?: boolean;
+  selecionados: number;
+  onSelecionarTodos?: () => void;
+  children: React.ReactNode;
 }) {
+  const ids = linhas.map(getCardId);
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `${columnId}::rep::${rep}`,
+    data: { columnId, ids },
+  });
   const paraMensagem = linhas.map((p) => {
     const raw = p as Record<string, string>;
     return {
@@ -1688,19 +1737,66 @@ function GrupoRepresentante({
     };
   });
   const total = paraMensagem.reduce((s, l) => s + l.peso_kg, 0);
+  const todos = selecionados === linhas.length;
   return (
-    <div className="mt-1 flex items-center justify-between gap-2 rounded-md bg-muted/60 px-2 py-1.5">
-      <div className="min-w-0">
-        <div className="truncate text-[11px] font-semibold">{rep}</div>
-        <div className="text-[10px] text-muted-foreground">
-          {linhas.length} {linhas.length === 1 ? "linha" : "linhas"} · {kg(total)}
-        </div>
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "rounded-lg border bg-card",
+        aberto && "border-accent/40",
+        todos && "ring-2 ring-accent",
+        achou && "ring-2 ring-amber-400",
+        apagado && "opacity-35",
+        isDragging && "opacity-50",
+      )}
+    >
+      <div className="flex items-center gap-1.5 px-2 py-2">
+        <button
+          type="button"
+          title="Arrastar todas as linhas deste representante"
+          className="shrink-0 cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
+          {...listeners}
+          {...attributes}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+        {onSelecionarTodos && (
+          <input
+            type="checkbox"
+            aria-label={`Selecionar todas as linhas de ${rep}`}
+            className="h-3.5 w-3.5 shrink-0 cursor-pointer"
+            checked={todos}
+            ref={(el) => {
+              if (el) el.indeterminate = selecionados > 0 && !todos;
+            }}
+            onChange={onSelecionarTodos}
+          />
+        )}
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+        >
+          {aberto ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+          )}
+          <div className="min-w-0">
+            <div className="break-words text-xs font-semibold leading-tight">{rep}</div>
+            <div className="text-[11px] text-muted-foreground">
+              {linhas.length} {linhas.length === 1 ? "linha" : "linhas"} · {kg(total)}
+              {selecionados > 0 && !todos && ` · ${selecionados} selecionada(s)`}
+            </div>
+          </div>
+        </button>
+        <BotaoCopiar
+          pequeno
+          rotulo="Mensagem"
+          texto={mensagemRepresentante(rep, paraMensagem, dataRef)}
+        />
       </div>
-      <BotaoCopiar
-        pequeno
-        rotulo="Mensagem"
-        texto={mensagemRepresentante(rep, paraMensagem, dataRef)}
-      />
+      {aberto && <div className="space-y-2 border-t bg-muted/20 p-1.5">{children}</div>}
     </div>
   );
 }
