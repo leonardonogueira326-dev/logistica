@@ -17,6 +17,7 @@ from api.routers.config import router as config_router  # noqa: E402
 from api.routers.setup import router as setup_router  # noqa: E402
 from api.routers.historico import router as historico_router  # noqa: E402
 from api.routers.pedidos_manuais import router as pedidos_manuais_router  # noqa: E402
+from api.routers.sincronizacao import router as sincronizacao_router  # noqa: E402
 from api.schemas import HealthSchema  # noqa: E402
 from config_operacional import carregar_configuracao  # noqa: E402
 
@@ -45,6 +46,7 @@ app.include_router(config_router)
 app.include_router(setup_router)
 app.include_router(historico_router)
 app.include_router(pedidos_manuais_router)
+app.include_router(sincronizacao_router)
 
 
 @app.on_event("startup")
