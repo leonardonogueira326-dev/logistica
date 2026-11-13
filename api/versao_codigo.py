@@ -51,14 +51,16 @@ def _consultar_github(raiz: Path) -> None:
     commit = ""
     try:
         r = subprocess.run(
-            ["git", "ls-remote", "origin", "refs/heads/main"],
+            ["git", "ls-remote", "origin", "refs/heads/estavel", "refs/heads/main"],
             cwd=raiz,
             capture_output=True,
             text=True,
             timeout=30,
         )
         if r.returncode == 0 and r.stdout.strip():
-            commit = r.stdout.split()[0][:7]
+            # "estavel" = última versão em que os testes do GitHub passaram; sem ela, a main
+            refs = {l.split()[1]: l.split()[0] for l in r.stdout.splitlines() if len(l.split()) == 2}
+            commit = (refs.get("refs/heads/estavel") or refs.get("refs/heads/main", ""))[:7]
     except (OSError, subprocess.SubprocessError):
         pass
     with _lock:
@@ -76,7 +78,8 @@ def commit_github(raiz: Path) -> str:
             _cache["consultando"] = True
             threading.Thread(target=_consultar_github, args=(raiz,), daemon=True).start()
         conhecido = _cache["commit"]
-    return conhecido or _ler_ref(raiz / ".git", "refs/remotes/origin/main")
+    git = raiz / ".git"
+    return conhecido or _ler_ref(git, "refs/remotes/origin/estavel") or _ler_ref(git, "refs/remotes/origin/main")
 
 
 def status_atualizacao(raiz: Path) -> dict:

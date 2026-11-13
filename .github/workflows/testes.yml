@@ -30,3 +30,16 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npx tsc --noEmit -p .
       - run: npm run build
+  # Testes passaram na main: a branch "estavel" avança. É ela que os PCs baixam
+  # (scripts/atualizar_codigo.bat e o vigia) — versão com teste falhando não chega neles.
+  publicar:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [servidor, telas]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git push origin HEAD:refs/heads/estavel
