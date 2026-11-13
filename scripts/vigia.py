@@ -64,8 +64,10 @@ def commit_local() -> str:
 
 
 def commit_github() -> str:
-    saida = _git("ls-remote", "origin", "refs/heads/main")
-    return saida.split()[0] if saida else ""
+    """Versão que este PC deve rodar: 'estavel' (testes do GitHub passaram); sem ela, a main."""
+    saida = _git("ls-remote", "origin", "refs/heads/estavel", "refs/heads/main")
+    refs = {l.split()[1]: l.split()[0] for l in saida.splitlines() if len(l.split()) == 2}
+    return refs.get("refs/heads/estavel") or refs.get("refs/heads/main", "")
 
 
 def rodar_bat(nome: str, timeout: int = 900) -> int:

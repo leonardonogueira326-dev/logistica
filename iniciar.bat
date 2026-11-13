@@ -8,11 +8,7 @@ if not exist .venv\Scripts\python.exe (
 )
 
 rem Atualiza o codigo (GitHub publico) e os dados (GitHub privado) antes de abrir
-where git >nul 2>&1 && (
-  echo Buscando atualizacoes no GitHub...
-  git pull -q --ff-only >nul 2>&1 || echo [AVISO] Nao consegui atualizar o codigo agora - seguindo com a versao local.
-)
-rem Garante o codigo igual ao do GitHub (mesmo se o pull acima falhar)
+rem Codigo: ultima versao testada do GitHub
 call scripts\atualizar_codigo.bat
 call scripts\sincronizar_dados.bat
 

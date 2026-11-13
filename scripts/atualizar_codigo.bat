@@ -1,6 +1,7 @@
 @echo off
 rem ============================================================
-rem  Deixa o CODIGO deste PC igual ao do GitHub (branch main).
+rem  Deixa o CODIGO deste PC igual a ultima versao TESTADA do GitHub
+rem  (branch "estavel", que so anda quando os testes automaticos passam).
 rem  Chamado pelo iniciar.bat e pelo sincronizar.bat.
 rem  - Nao depende de "git pull" dar certo: busca a main e troca a
 rem    pasta para ela, mesmo se este PC estiver em outra branch ou
@@ -33,20 +34,26 @@ if errorlevel 1 (
   exit /b 0
 )
 
+rem Versao que este PC deve rodar: "estavel" = ultima em que os testes automaticos
+rem do GitHub passaram. Sem ela ainda, usa a main.
+git fetch -q origin estavel >> "%CLOG%" 2>&1
+set "ALVO=origin/main"
+git rev-parse -q --verify origin/estavel >nul 2>&1 && set "ALVO=origin/estavel"
+
 set "ATUAL="
 for /f %%c in ('git rev-parse HEAD') do set "ATUAL=%%c"
-for /f %%c in ('git rev-parse origin/main') do set "NUVEM=%%c"
+for /f %%c in ('git rev-parse %ALVO%') do set "NUVEM=%%c"
 for /f %%b in ('git rev-parse --abbrev-ref HEAD') do set "RAMO=%%b"
 if "%ATUAL%"=="%NUVEM%" if /i "%RAMO%"=="main" goto conferir_mexidos
 
 rem Guarda o que so existe neste PC antes de trocar
-git merge-base --is-ancestor HEAD origin/main >nul 2>&1 || (
+git merge-base --is-ancestor HEAD %ALVO% >nul 2>&1 || (
   git branch -f "guardado-%COMPUTERNAME%" HEAD >> "%CLOG%" 2>&1
   echo commits locais guardados na branch guardado-%COMPUTERNAME% >> "%CLOG%"
 )
 echo Atualizando o codigo do sistema...
 echo %ATUAL% ^(%RAMO%^) -^> %NUVEM% >> "%CLOG%"
-git checkout -q -f -B main origin/main >> "%CLOG%" 2>&1
+git checkout -q -f -B main %ALVO% >> "%CLOG%" 2>&1
 if errorlevel 1 goto erro
 git branch -q --set-upstream-to=origin/main main >> "%CLOG%" 2>&1
 
@@ -65,7 +72,7 @@ rem Mesmo commit, mas algum arquivo de codigo foi mexido aqui? Volta ao do GitHu
 git diff --quiet HEAD >nul 2>&1 && goto ok
 echo arquivos de codigo mexidos neste PC - voltando ao do GitHub: >> "%CLOG%"
 git diff --name-only HEAD >> "%CLOG%" 2>&1
-git checkout -q -f -B main origin/main >> "%CLOG%" 2>&1
+git checkout -q -f -B main %ALVO% >> "%CLOG%" 2>&1
 if errorlevel 1 goto erro
 
 :ok
