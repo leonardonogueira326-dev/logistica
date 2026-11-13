@@ -52,6 +52,9 @@ from models import PedidoConsolidado  # noqa: E402
 from motor_ingestao import MotorIngestao  # noqa: E402
 from motor_logistica import MotorLogistica  # noqa: E402
 import config  # noqa: E402
+import os  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
 from normalizador import formatar_kg, mesma_linha, normalizar_texto, resolver_rota_logistica, normalizar_codigo_cliente  # noqa: E402
 from pendencias import (  # noqa: E402
     CONSULTA_REPRESENTANTE,
@@ -184,7 +187,13 @@ def _painel_veiculos(motor: MotorLogistica, session_id: str) -> dict[str, dict[s
         agenda = motor.agenda.get(vid)
         if agenda and agenda.get("assinatura") != motor.assinatura_carga(vid):
             agenda = None  # carga mudou depois: horários previstos não valem mais
+        if sem_local and session_id and not os.environ.get("LOGISTICA_SEM_GEO_AUTO"):
+            try:
+                _iniciar_geocodificacao(session_id, automatico=True)
+            except HTTPException:
+                pass
         painel[vid] = {
+            "localizando": bool(sem_local) and bool(_geocodificando.get(session_id, {}).get("rodando")),
             "agenda": agenda,
             "nome": nomes.get(vid, rota.veiculo_nome),
             "ordem_otimizada": motor.ordem_otimizada(vid),
@@ -905,28 +914,45 @@ def _linhas_do_quadro(session_id: str) -> list[dict[str, Any]]:
     return [asdict(c) for c in consolidados]
 
 
-@router.post("/{session_id}/geocodificar", tags=["mapa"])
-def iniciar_geocodificacao(session_id: str, background_tasks: BackgroundTasks) -> dict[str, Any]:
-    """Localiza no mapa os clientes deste quadro que ainda não têm coordenada (em segundo plano)."""
-    if _geocodificando.get(session_id, {}).get("rodando"):
-        return _geocodificando[session_id]
+def _iniciar_geocodificacao(session_id: str, automatico: bool = False) -> dict[str, Any]:
+    """
+    Localiza no mapa (em segundo plano) os destinos deste quadro que ainda não
+    têm coordenada. Automático (quadro aberto): no máximo a cada 10 min, para
+    não insistir quando o serviço de mapas está fora do ar.
+    """
+    atual = _geocodificando.get(session_id, {})
+    if atual.get("rodando"):
+        return atual
+    if automatico and time.time() - atual.get("iniciado_em", 0) < 600:
+        return atual
     linhas = _linhas_do_quadro(session_id)
     base, cache = geocodificacao.enderecos_base(), geocodificacao.carregar_cache()
     faltam = len({geocodificacao.chave_da_linha(l, base) for l in linhas} - set(cache) - {""})
-    estado = {"rodando": faltam > 0, "total": faltam, "feitos": 0, "nao_achados": [], "erro": ""}
+    estado = {"rodando": faltam > 0, "total": faltam, "feitos": 0, "nao_achados": [], "erro": "",
+              "iniciado_em": time.time()}
     _geocodificando[session_id] = estado
+    if not faltam:
+        return estado
 
     def tarefa() -> None:
         def progresso(p: dict[str, Any]) -> None:
             _geocodificando[session_id].update(p)
 
-        resultado = geocodificacao.geocodificar_linhas(linhas, progresso=progresso)
-        geocodificacao.garantir_deposito()
-        _geocodificando[session_id].update(resultado, rodando=False)
+        try:
+            resultado = geocodificacao.geocodificar_linhas(linhas, progresso=progresso)
+            geocodificacao.garantir_deposito()
+            _geocodificando[session_id].update(resultado, rodando=False)
+        except Exception as exc:  # noqa: BLE001
+            _geocodificando[session_id].update(rodando=False, erro=str(exc))
 
-    if faltam:
-        background_tasks.add_task(tarefa)
+    threading.Thread(target=tarefa, daemon=True).start()
     return estado
+
+
+@router.post("/{session_id}/geocodificar", tags=["mapa"])
+def iniciar_geocodificacao(session_id: str) -> dict[str, Any]:
+    """Botão "Localizar clientes" (o quadro também começa sozinho quando abre)."""
+    return _iniciar_geocodificacao(session_id)
 
 
 @router.get("/{session_id}/geocodificar", tags=["mapa"])
