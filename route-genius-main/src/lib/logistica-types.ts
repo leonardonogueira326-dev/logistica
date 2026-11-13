@@ -197,7 +197,11 @@ export function palavraChaveParaAprendizado(row: PedidoConsolidado): string {
  * Identidade de uma carga no Kanban: pedido/ano/item + OF (ex.: 003060/26/002#008761/25).
  * O nº do pedido sozinho se repete (várias OFs por item), então nunca use ele para achar o card.
  */
-export function idCarga(p: { id_carga?: string; id_item?: string; numero_pedido?: string }): string {
+export function idCarga(p: {
+  id_carga?: string;
+  id_item?: string;
+  numero_pedido?: string;
+}): string {
   return String(p.id_carga || p.id_item || p.numero_pedido || "");
 }
 
@@ -317,6 +321,8 @@ export interface MoverLoteRequest {
   forcar?: boolean;
   liberar_representante?: boolean;
   autorizado_por?: string;
+  /** "Transportadora a definir": código que o representante informou */
+  transportadora_codigo?: string;
 }
 
 export interface MoverPedidoRequest {
@@ -327,6 +333,7 @@ export interface MoverPedidoRequest {
   /** Card "Consultar representante" solto num caminhão: o representante liberou. */
   liberar_representante?: boolean;
   autorizado_por?: string;
+  transportadora_codigo?: string;
 }
 
 export interface DividirCargaRequest {
@@ -409,13 +416,12 @@ export function parseRetornoVeiculo(columnId: string): string | null {
 }
 
 export type ConsolidadoPatch = Partial<
-  Pick<
-    PedidoConsolidado,
-    "cliente" | "bairro" | "cidade" | "cep" | "representante" | "status"
-  >
+  Pick<PedidoConsolidado, "cliente" | "bairro" | "cidade" | "cep" | "representante" | "status">
 > & {
   /** Apelido da empresa (FORT, LAP) = levar para industrializar; "" desfaz. */
   remessa_industrializacao?: string;
+  /** "Transportadora a definir": código (base de transportadoras) que o representante informou. */
+  transportadora_codigo?: string;
 };
 
 export const STATUS_FRETE_OPCOES = [
@@ -437,7 +443,10 @@ const IND = "IND:";
 /** Caixa de frete da conferência: os fretes + "levar para industrializar". */
 export const OPCOES_SELETOR_FRETE: { value: string; label: string }[] = [
   ...STATUS_FRETE_OPCOES,
-  ...EMPRESAS_INDUSTRIALIZACAO.map((e) => ({ value: `${IND}${e.value}`, label: `Industrialização — levar na ${e.label}` })),
+  ...EMPRESAS_INDUSTRIALIZACAO.map((e) => ({
+    value: `${IND}${e.value}`,
+    label: `Industrialização — levar na ${e.label}`,
+  })),
 ];
 
 /** Empresa da remessa desta linha ("" se não é remessa para industrialização). */
@@ -447,7 +456,9 @@ export function empresaRemessa(c: Pick<PedidoConsolidado, "industrializacao">): 
 }
 
 /** Valor da caixa de frete para a linha. */
-export function valorSeletorFrete(c: Pick<PedidoConsolidado, "industrializacao" | "status">): string {
+export function valorSeletorFrete(
+  c: Pick<PedidoConsolidado, "industrializacao" | "status">,
+): string {
   const e = empresaRemessa(c);
   return e ? `${IND}${e}` : c.status;
 }
