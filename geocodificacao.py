@@ -4,8 +4,11 @@ Geocodificação sob demanda, com cache.
 - Só geocodifica os clientes que aparecem nos quadros (não as 6.000 linhas da
   base): a primeira vez de cada cliente leva ~1,5 s (limite do serviço
   gratuito Nominatim/OpenStreetMap); depois fica no cache para sempre.
-- Endereço vem da base de clientes com endereço (base-de-clientes1.xlsx:
-  Endereço, Bairro, Cidade, CEP).
+- Endereço vem da base de clientes: a exportação do sistema da empresa
+  (base-de-clientes.xlsx: ENDERECO + NUMERO, BAIRRO, CIDADE, UF, CEP) e, para o
+  que faltar, a base antiga (base-de-clientes1.xlsx: Endereço, Bairro, Cidade, CEP).
+- Cliente que estava no cache só pela rua/CEP/cidade é refeito quando a base
+  passa a ter o endereço com número (mais preciso). Correção manual nunca.
 - Tentativas, da mais precisa para a menos: rua+cidade+CEP -> CEP -> cidade.
   A precisão fica registrada ("endereco", "cep", "cidade").
 - Correção manual (arrastar o marcador no mapa) é guardada com
@@ -32,7 +35,7 @@ import transportadoras
 
 RAIZ = Path(__file__).resolve().parent
 ARQUIVO_CACHE = RAIZ / "data" / "geocache.json"
-NOMES_BASE_ENDERECO = ("base-de-clientes1.xlsx",)
+NOMES_BASE_ENDERECO = ("base-de-clientes.xlsx", "base-de-clientes1.xlsx")
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "SuperfineLogistica/1.0 (uso interno)"
 INTERVALO_SEG = 1.5
@@ -86,15 +89,7 @@ def _sem_acento(texto: str) -> str:
 _cache_base: dict[str, Any] = {}
 
 
-def enderecos_base() -> dict[str, dict[str, str]]:
-    """codigo_cliente -> {endereco, bairro, cidade, cep} da base com endereço."""
-    candidatos = [RAIZ / n for n in NOMES_BASE_ENDERECO if (RAIZ / n).is_file()]
-    if not candidatos:
-        return {}
-    caminho = candidatos[0]
-    mtime = caminho.stat().st_mtime
-    if _cache_base.get("mtime") == mtime:
-        return _cache_base["dados"]
+def _ler_base_endereco(caminho: Path) -> dict[str, dict[str, str]]:
     import openpyxl
 
     dados: dict[str, dict[str, str]] = {}
@@ -104,20 +99,55 @@ def enderecos_base() -> dict[str, dict[str, str]]:
         linhas = ws.iter_rows(values_only=True)
         cab = [_sem_acento(normalizar_texto(str(c or ""))) for c in next(linhas, [])]
         idx = {n: i for i, n in enumerate(cab)}
+        if "CODIGO" not in idx or "ENDERECO" not in idx:
+            return {}  # exportação sem endereço
         pegar = lambda l, nome: str(l[idx[nome]] or "").strip() if nome in idx else ""  # noqa: E731
         for linha in linhas:
             codigo = normalizar_codigo_cliente(pegar(linha, "CODIGO"))
-            if codigo:
-                dados[codigo] = {
-                    "endereco": pegar(linha, "ENDERECO"),
-                    "bairro": pegar(linha, "BAIRRO"),
-                    "cidade": pegar(linha, "CIDADE"),
-                    "cep": pegar(linha, "CEP"),
-                }
+            if not codigo:
+                continue
+            rua, numero = pegar(linha, "ENDERECO"), pegar(linha, "NUMERO")
+            if rua and numero and numero.upper() not in ("0", "S/N", "SN"):
+                rua = f"{rua}, {numero}"
+            dados[codigo] = {
+                "endereco": rua,
+                "bairro": pegar(linha, "BAIRRO"),
+                "cidade": pegar(linha, "CIDADE"),
+                "uf": pegar(linha, "UF"),
+                "cep": pegar(linha, "CEP"),
+            }
     finally:
         wb.close()
-    _cache_base.update(mtime=mtime, dados=dados)
     return dados
+
+
+def enderecos_base() -> dict[str, dict[str, str]]:
+    """codigo_cliente -> {endereco, bairro, cidade, uf, cep}: a base nova primeiro, a antiga completa."""
+    candidatos = [RAIZ / n for n in NOMES_BASE_ENDERECO if (RAIZ / n).is_file()]
+    if not candidatos:
+        return {}
+    marca = tuple((str(c), c.stat().st_mtime) for c in candidatos)
+    if _cache_base.get("marca") == marca:
+        return _cache_base["dados"]
+    dados: dict[str, dict[str, str]] = {}
+    for caminho in candidatos:
+        for codigo, reg in _ler_base_endereco(caminho).items():
+            atual = dados.setdefault(codigo, {})
+            for campo, valor in reg.items():
+                if valor and not atual.get(campo):
+                    atual[campo] = valor
+    _cache_base.update(marca=marca, dados=dados)
+    return dados
+
+
+def precisa_refazer(registro: dict[str, Any] | None, endereco: dict[str, str]) -> bool:
+    """Cache feito sem o número (ou só por CEP/cidade) e agora a base tem rua + número."""
+    if not registro or registro.get("manual"):
+        return False
+    rua = endereco.get("endereco", "")
+    if "," not in rua or registro.get("base_endereco") == rua:  # sem número / já tentado
+        return False
+    return registro.get("precisao") != "endereco" or rua not in str(registro.get("consulta", ""))
 
 
 # ------------------------------------------------------------------- consulta
@@ -203,7 +233,12 @@ def geocodificar_linhas(
     pendentes: dict[str, dict[str, Any]] = {}
     for linha in linhas:
         chave = chave_da_linha(linha, base)
-        if chave and chave not in cache and chave not in pendentes:
+        if not chave or chave in pendentes:
+            continue
+        novo = chave not in cache
+        if not novo and chave.startswith("CLI:"):
+            novo = precisa_refazer(cache.get(chave), base.get(chave[4:], {}))
+        if novo:
             pendentes[chave] = linha
     estado = {"total": len(pendentes), "feitos": 0, "nao_achados": [], "erro": ""}
     for chave, linha in pendentes.items():
@@ -211,7 +246,7 @@ def geocodificar_linhas(
         try:
             if chave.startswith("CLI:"):
                 endereco = base.get(chave[4:], {})
-                achado = geocodificar_cliente(endereco, uf, buscar)
+                achado = geocodificar_cliente(endereco, endereco.get("uf") or uf, buscar)
             elif chave.startswith("TRP:"):
                 info = transportadoras.endereco_transportadora(
                     str(linha.get("transportadora_codigo") or ""), str(linha.get("transportadora") or "")
@@ -223,11 +258,21 @@ def geocodificar_linhas(
         except ConnectionError as exc:
             estado["erro"] = str(exc)
             break
+        rua_base = base.get(chave[4:], {}).get("endereco", "") if chave.startswith("CLI:") else ""
         if achado:
+            if rua_base:
+                achado["base_endereco"] = rua_base  # não refaz de novo com o mesmo endereço
             with _trava:
                 cache = carregar_cache()
                 cache[chave] = achado
                 salvar_cache(cache)
+        elif chave in cache and rua_base:
+            # tentou melhorar e não achou: fica a coordenada antiga, sem tentar de novo
+            with _trava:
+                cache = carregar_cache()
+                if chave in cache:
+                    cache[chave]["base_endereco"] = rua_base
+                    salvar_cache(cache)
         else:
             estado["nao_achados"].append(linha.get("cliente") or chave)
         estado["feitos"] += 1

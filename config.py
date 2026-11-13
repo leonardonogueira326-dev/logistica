@@ -139,9 +139,11 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 ARQUIVO_BASE_CLIENTES_CSV = "base-de-clientes1.xlsx - Planilha1.csv"
 ARQUIVO_BASE_TRANSPORTADORAS_CSV = "base-transportadoras.xlsx - Dados.csv"
 ARQUIVO_BASE_CLIENTES_XLSX = "base-de-clientes1.xlsx"
+# A exportação do sistema da empresa (base-de-clientes.xlsx, aba Dados) já traz
+# endereço, número, bairro e CEP: vem primeiro. A base1 antiga só completa.
 ARQUIVO_BASE_CLIENTES_XLSX_FALLBACKS = (
-    "base-de-clientes1.xlsx",
     "base-de-clientes.xlsx",
+    "base-de-clientes1.xlsx",
 )
 ARQUIVO_BASE_CLIENTES_SHEETS = ("Planilha1", "Dados")
 ARQUIVO_BASE_TRANSPORTADORAS_XLSX = "base-transportadoras.xlsx"
