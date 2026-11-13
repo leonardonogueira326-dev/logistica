@@ -101,6 +101,8 @@ class ConsolidadoPatchSchema(BaseModel):
     # Remessa para industrialização escolhida na caixa de frete: apelido da empresa
     # (FORT, LAP) — a logística leva até lá. "" desfaz e volta o destino original.
     remessa_industrializacao: Optional[str] = None
+    # "Transportadora a definir": código que o representante informou
+    transportadora_codigo: Optional[str] = None
 
 
 class ResumoIngestaoSchema(BaseModel):
@@ -254,6 +256,8 @@ class MoverLoteSchema(BaseModel):
     forcar: bool = False
     liberar_representante: bool = False
     autorizado_por: str = ""
+    # "Transportadora a definir": código que o representante informou ao liberar
+    transportadora_codigo: str = ""
 
 
 class MoverPedidoSchema(BaseModel):
@@ -267,6 +271,8 @@ class MoverPedidoSchema(BaseModel):
     # e confirmou que o representante liberou.
     liberar_representante: bool = False
     autorizado_por: str = ""
+    # "Transportadora a definir": código que o representante informou ao liberar
+    transportadora_codigo: str = ""
 
 
 class DividirCargaSchema(BaseModel):

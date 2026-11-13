@@ -237,6 +237,8 @@ class MotorLogistica:
                         "obs_recebimento": getattr(c, "obs_recebimento", ""),
                         "entrega_em": getattr(c, "entrega_em", ""),
                         "entrega_cliente_codigo": getattr(c, "entrega_cliente_codigo", ""),
+                        "transportadora": getattr(c, "transportadora", ""),
+                        "transportadora_codigo": getattr(c, "transportadora_codigo", ""),
                         "pendente_desde": getattr(c, "pendente_desde", ""),
                         "data_producao": c.data_producao,
                         "cliente": c.cliente,

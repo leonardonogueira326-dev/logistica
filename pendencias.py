@@ -8,6 +8,8 @@ frete na conferência, a regra acompanha).
 |------------------------|-----------------------------------|----------------------------------|
 | CONSULTA_REPRESENTANTE | só frete da logística: frota      | representante: "pode carregar?"  |
 |                        | própria e levar na transportadora |                                  |
+|                        | + levar na transportadora com     | representante: libera e diz qual |
+|                        |   "TRANSPORTADORA A DEFINIR"      | é a transportadora               |
 | PAGAMENTO_ANTECIPADO   | só frete da logística             | comercial libera por e-mail      |
 | PESO_ZERADO            | só frete da logística             | logística informa o peso         |
 
@@ -20,6 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 import config
+from transportadoras import a_definir
 
 CONSULTA_REPRESENTANTE = "CONSULTA_REPRESENTANTE"
 PAGAMENTO_ANTECIPADO = "PAGAMENTO_ANTECIPADO"
@@ -39,6 +42,11 @@ def _get(c: Any, campo: str, padrao: Any = "") -> Any:
     return c.get(campo, padrao) if isinstance(c, dict) else getattr(c, campo, padrao)
 
 
+def transportadora_a_definir(c: Any) -> bool:
+    """Levar na transportadora, mas o PDF diz 'TRANSPORTADORA A DEFINIR'."""
+    return _get(c, "status") == config.COD_TERCEIRO_HUB and a_definir(str(_get(c, "transportadora", "")))
+
+
 def logistica_age(c: Any) -> bool:
     return _get(c, "status") in STATUS_LOGISTICA
 
@@ -54,10 +62,8 @@ def pendencias(c: Any, limite_dias_uteis: int = 3) -> list[str]:
         dias = int(_get(c, "dias_uteis_antecedencia", 0) or 0)
     except (TypeError, ValueError):
         dias = 0
-    if (
-        logistica_age(c)
-        and dias >= limite_dias_uteis
-        and _get(c, "consulta_representante") != "LIBERADO"
+    if _get(c, "consulta_representante") != "LIBERADO" and (
+        dias >= limite_dias_uteis or transportadora_a_definir(c)
     ):
         abertas.append(CONSULTA_REPRESENTANTE)
     if _get(c, "liberacao_comercial") == "AGUARDANDO":
@@ -74,7 +80,10 @@ def pendencias(c: Any, limite_dias_uteis: int = 3) -> list[str]:
 def motivo_parado(c: Any, limite_dias_uteis: int = 3) -> str:
     partes = []
     for codigo in pendencias(c, limite_dias_uteis):
-        if codigo == CONSULTA_REPRESENTANTE:
+        if codigo == CONSULTA_REPRESENTANTE and transportadora_a_definir(c):
+            situacao = " (representante NÃO liberou)" if _get(c, "consulta_representante") == "NAO_LIBERADO" else ""
+            partes.append(f"Consultar representante: transportadora a definir{situacao}")
+        elif codigo == CONSULTA_REPRESENTANTE:
             prod = _get(c, "data_producao")
             dias = _get(c, "dias_uteis_antecedencia")
             situacao = " (representante NÃO liberou)" if _get(c, "consulta_representante") == "NAO_LIBERADO" else ""

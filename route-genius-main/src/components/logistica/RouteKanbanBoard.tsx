@@ -98,6 +98,7 @@ type PendingMove = {
   forcar?: boolean;
   liberarRepresentante?: boolean;
   autorizadoPor?: string;
+  transportadoraCodigo?: string;
 };
 
 export type MoverLoteFn = (payload: {
@@ -107,6 +108,7 @@ export type MoverLoteFn = (payload: {
   forcar?: boolean;
   liberar_representante?: boolean;
   autorizado_por?: string;
+  transportadora_codigo?: string;
 }) => Promise<void>;
 
 const pendenciasDoCard = (p: CardPedido): string[] =>
@@ -114,6 +116,15 @@ const pendenciasDoCard = (p: CardPedido): string[] =>
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
+
+/** Levar na transportadora com "TRANSPORTADORA A DEFINIR": o representante ainda vai dizer qual. */
+const transportadoraADefinir = (p: CardPedido) => {
+  const raw = p as Record<string, string>;
+  return (
+    /\bA\s+(DEFINIR|COMBINAR|CONFIRMAR)\b/i.test(String(raw.transportadora ?? "")) ||
+    /transportadora a definir/i.test(String(raw.motivo ?? ""))
+  );
+};
 
 /** Comercial e peso zerado não sobem no caminhão: ficam na página Pendências. */
 const cardTravado = (p: CardPedido) =>
@@ -224,6 +235,7 @@ export function RouteKanbanBoard({
     forcar?: boolean;
     liberar_representante?: boolean;
     autorizado_por?: string;
+    transportadora_codigo?: string;
   }) => Promise<void>;
   onAntecipar?: (payload: {
     numero_pedido: string;
@@ -295,9 +307,17 @@ export function RouteKanbanBoard({
   const [erroDividir, setErroDividir] = useState("");
   const [dividindo, setDividindo] = useState(false);
   const [repModal, setRepModal] = useState<
-    (PendingMove & { titulo: string; representante: string; destinoLabel: string }) | null
+    | (PendingMove & {
+        titulo: string;
+        representante: string;
+        destinoLabel: string;
+        aDefinir: number;
+        dataFutura: number;
+      })
+    | null
   >(null);
   const [repQuem, setRepQuem] = useState("");
+  const [repTransp, setRepTransp] = useState("");
   const [repErro, setRepErro] = useState("");
   const [repSalvando, setRepSalvando] = useState(false);
 
@@ -481,6 +501,7 @@ export function RouteKanbanBoard({
           forcar: move.forcar,
           liberar_representante: move.liberarRepresentante,
           autorizado_por: move.autorizadoPor,
+          transportadora_codigo: move.transportadoraCodigo,
         });
       } else {
         await onMove({
@@ -490,6 +511,7 @@ export function RouteKanbanBoard({
           forcar: move.forcar,
           liberar_representante: move.liberarRepresentante,
           autorizado_por: move.autorizadoPor,
+          transportadora_codigo: move.transportadoraCodigo,
         });
       }
       setBacklogModal(null);
@@ -531,7 +553,9 @@ export function RouteKanbanBoard({
         const reps = [...new Set(comRep.map((c) => String(c.representante ?? "")).filter(Boolean))];
         const rep = reps.join(" / ");
         setRepQuem(rep);
+        setRepTransp("");
         setRepErro("");
+        const aDefinir = comRep.filter(transportadoraADefinir).length;
         setRepModal({
           ids,
           origem,
@@ -542,6 +566,8 @@ export function RouteKanbanBoard({
               : `${comRep.length} linhas de ${rep || "representantes"}`,
           representante: rep,
           destinoLabel: destinos.find((c) => c.id === destino)?.label ?? destino,
+          aDefinir,
+          dataFutura: comRep.length - aDefinir,
         });
         return;
       }
@@ -554,7 +580,12 @@ export function RouteKanbanBoard({
     setRepSalvando(true);
     setRepErro("");
     try {
-      await executeMove({ ...repModal, liberarRepresentante: true, autorizadoPor: repQuem.trim() });
+      await executeMove({
+        ...repModal,
+        liberarRepresentante: true,
+        autorizadoPor: repQuem.trim(),
+        transportadoraCodigo: repTransp.trim(),
+      });
       setRepModal(null);
     } catch (e) {
       setRepErro(e instanceof Error ? e.message : "Não foi possível carregar.");
@@ -1248,10 +1279,34 @@ export function RouteKanbanBoard({
             <DialogTitle>O representante liberou?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            <strong className="text-foreground">{repModal?.titulo}</strong> tem Dt. Produção futura.
+            <strong className="text-foreground">{repModal?.titulo}</strong>{" "}
+            {repModal?.aDefinir && !repModal.dataFutura
+              ? "está com a transportadora a definir."
+              : repModal?.aDefinir
+                ? "tem Dt. Produção futura ou transportadora a definir."
+                : "tem Dt. Produção futura."}{" "}
             Só carregue em <strong className="text-foreground">{repModal?.destinoLabel}</strong> se
             o representante autorizou.
           </p>
+          {!!repModal?.aDefinir && (
+            <label className="block text-sm">
+              <span className="text-xs font-medium text-muted-foreground">
+                Transportadora que o representante definiu (código da base)
+              </span>
+              <input
+                className="mt-1 w-full px-3 py-2 text-sm rounded-md border border-input bg-background font-mono"
+                inputMode="numeric"
+                value={repTransp}
+                onChange={(e) => setRepTransp(e.target.value)}
+                placeholder="ex.: 1073"
+              />
+              {!repTransp.trim() && (
+                <span className="mt-1 block text-xs text-amber-700">
+                  Sem o código a carga sobe sem o endereço de entrega.
+                </span>
+              )}
+            </label>
+          )}
           <label className="block text-sm">
             <span className="text-xs font-medium text-muted-foreground">Quem liberou</span>
             <input

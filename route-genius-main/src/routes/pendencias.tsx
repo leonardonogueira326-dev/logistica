@@ -1,5 +1,6 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Check, Keyboard, Loader2, ShieldAlert, Truck } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { BotaoCopiar } from "@/components/BotaoCopiar";
@@ -14,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { getStoredSessionId, useLogisticaSession } from "@/hooks/useLogisticaSession";
+import { patchConsolidado } from "@/lib/api-client";
 import type { FraseObservacao, PedidoConsolidado } from "@/lib/logistica-types";
 import {
   COD_PROCESSANDO_IA,
@@ -39,12 +41,17 @@ export const Route = createFileRoute("/pendencias")({
 
 type Filtro = "todas" | "faltam" | "alerta" | "retira" | "frases";
 
-const ehRetiraOuColeta = (c: PedidoConsolidado) => c.status === "RETIRA FOB" || c.status === "TERCEIRO";
+const ehRetiraOuColeta = (c: PedidoConsolidado) =>
+  c.status === "RETIRA FOB" || c.status === "TERCEIRO";
 
 const idLinha = (c: PedidoConsolidado) => c.id_item || c.numero_pedido_norm || c.numero_pedido;
 const temPend = (c: PedidoConsolidado, p: string) => (c.pendencias ?? []).includes(p as never);
 const ehLevarNaTransportadora = (c: PedidoConsolidado) =>
   c.status === "ENTREGA_TERCEIRO_HUB" || c.tipo_frete === "ENTREGA_TERCEIRO_HUB";
+/** Levar na transportadora com "TRANSPORTADORA A DEFINIR": o representante ainda vai dizer qual. */
+const transportadoraADefinir = (c: PedidoConsolidado) =>
+  ehLevarNaTransportadora(c) &&
+  /\bA\s+(DEFINIR|COMBINAR|CONFIRMAR)\b/i.test(String(c.transportadora ?? ""));
 const cidadeDe = (c: PedidoConsolidado) =>
   ehLevarNaTransportadora(c) && c.enriquecido_mestre !== "HUB" ? "—" : c.cidade_destino || c.cidade;
 
@@ -59,15 +66,23 @@ function motivoLeitura(c: PedidoConsolidado): string {
       .filter(Boolean)
       .filter((x) => !/pagamento antecipado|peso zerado/i.test(x))
       // remessa / entregar em outra empresa já têm alerta próprio
-      .filter((x) => !((c.industrializacao || c.entrega_em) && /palavra suspeita: (remessa|fort|lap)/i.test(x)));
+      .filter(
+        (x) =>
+          !(
+            (c.industrializacao || c.entrega_em) &&
+            /palavra suspeita: (remessa|fort|lap)/i.test(x)
+          ),
+      );
     if (partes.length) return partes.join(" | ");
   }
   if (c.flag_revisao_llm === "SIM" && c.sugestao_llm_status)
     return `IA sugere: ${rotuloSugestaoLlm(c.sugestao_llm_status)}`;
   if (c.status === "BLOQUEIO FISCAL" || c.status === "TRAVADO COMERCIAL")
     return `${c.status}${c.motivo_bloqueio ? ` — ${c.motivo_bloqueio}` : ""}`;
+  // Transportadora a definir: o endereço vem quando o representante disser qual é
+  if (transportadoraADefinir(c)) return "";
   // Endereço só importa quando a logística entrega (retira / transportadora que coleta não)
-  if (ehLevarNaTransportadora(c) && c.enriquecido_mestre !== "HUB")
+  if (ehLevarNaTransportadora(c) && c.enriquecido_mestre !== "HUB" && !transportadoraADefinir(c))
     return `Transportadora sem endereço — cadastre o código ${c.transportadora_codigo?.replace(/^0+/, "") || "?"} na base de transportadoras`;
   const logisticaEntrega = c.status === "LIBERADO" || c.status === "ENTREGA_TERCEIRO_HUB";
   if (logisticaEntrega && c.enriquecido_mestre !== "SIM" && c.enriquecido_mestre !== "HUB")
@@ -78,7 +93,7 @@ function motivoLeitura(c: PedidoConsolidado): string {
 type Alerta = {
   texto: string;
   tom: "erro" | "aviso" | "info" | "ok";
-  acao?: "peso" | "comercial" | "frase";
+  acao?: "peso" | "comercial" | "frase" | "transportadora";
   frase?: FraseObservacao;
 };
 
@@ -104,7 +119,10 @@ function alertasDasFrases(c: PedidoConsolidado): Alerta[] {
     const d = f.datas[0] ? dataDaFrase(f.datas[0], c.data_referencia) : null;
     const dTxt = f.datas[0] ?? "";
     if (f.significado === "FRETE")
-      out.push({ texto: `Frete pela frase que você ensinou (${ROTULO_FRETE[f.status ?? ""] ?? f.status})`, tom: "ok" });
+      out.push({
+        texto: `Frete pela frase que você ensinou (${ROTULO_FRETE[f.status ?? ""] ?? f.status})`,
+        tom: "ok",
+      });
     else if (f.significado === "FATURAR_APOS")
       out.push(
         d && ref && d > ref
@@ -126,19 +144,44 @@ function alertasDasFrases(c: PedidoConsolidado): Alerta[] {
 function alertasDa(c: PedidoConsolidado): Alerta[] {
   const out: Alerta[] = [];
   const leitura = motivoLeitura(c);
-  if (leitura) out.push({ texto: leitura, tom: c.status_ia === COD_PROCESSANDO_IA ? "info" : "erro" });
+  if (leitura)
+    out.push({ texto: leitura, tom: c.status_ia === COD_PROCESSANDO_IA ? "info" : "erro" });
   if (ehRetiraOuColeta(c)) {
     if (c.evidencia_frete)
       out.push({ texto: c.evidencia_frete, tom: c.evidencia_nivel === "VERMELHO" ? "erro" : "ok" });
-    if (c.liberacao_comercial === "AGUARDANDO") out.push({ texto: "Antecipado — o comercial trata", tom: "info" });
+    if (c.liberacao_comercial === "AGUARDANDO")
+      out.push({ texto: "Antecipado — o comercial trata", tom: "info" });
     if (!(c.peso_kg > 0)) out.push({ texto: "Peso zerado — não é da logística", tom: "info" });
   }
-  if (temPend(c, "PESO_ZERADO")) out.push({ texto: "Peso zerado: informe o peso da expedição", tom: "erro", acao: "peso" });
+  if (temPend(c, "PESO_ZERADO"))
+    out.push({ texto: "Peso zerado: informe o peso da expedição", tom: "erro", acao: "peso" });
   if (temPend(c, "PAGAMENTO_ANTECIPADO"))
-    out.push({ texto: "Pagamento antecipado: aguardando o comercial", tom: "aviso", acao: "comercial" });
+    out.push({
+      texto: "Pagamento antecipado: aguardando o comercial",
+      tom: "aviso",
+      acao: "comercial",
+    });
   if (c.liberacao_comercial === "LIBERADO" && !ehRetiraOuColeta(c))
-    out.push({ texto: `Comercial liberou${c.liberacao_comercial_por ? ` (${c.liberacao_comercial_por})` : ""}`, tom: "ok" });
-  if (temPend(c, "CONSULTA_REPRESENTANTE"))
+    out.push({
+      texto: `Comercial liberou${c.liberacao_comercial_por ? ` (${c.liberacao_comercial_por})` : ""}`,
+      tom: "ok",
+    });
+  if (transportadoraADefinir(c))
+    out.push(
+      temPend(c, "CONSULTA_REPRESENTANTE")
+        ? {
+            texto:
+              "Transportadora a definir — fica no representante até ele liberar e dizer qual é",
+            tom: "aviso",
+            acao: "transportadora",
+          }
+        : {
+            texto: "Representante liberou: informe a transportadora",
+            tom: "erro",
+            acao: "transportadora",
+          },
+    );
+  else if (temPend(c, "CONSULTA_REPRESENTANTE"))
     out.push({
       texto: `Consultar representante (${c.dias_uteis_antecedencia} d.u.) — fica no Kanban até liberar`,
       tom: "aviso",
@@ -150,7 +193,8 @@ function alertasDa(c: PedidoConsolidado): Alerta[] {
   return out;
 }
 
-const temAlerta = (c: PedidoConsolidado) => alertasDa(c).some((a) => a.tom === "erro" || a.tom === "aviso");
+const temAlerta = (c: PedidoConsolidado) =>
+  alertasDa(c).some((a) => a.tom === "erro" || a.tom === "aviso");
 
 const ROTULO_FRETE: Record<string, string> = {
   LIBERADO: "Frota própria",
@@ -178,6 +222,9 @@ function PendenciasPage() {
   const [salvarRegras, setSalvarRegras] = useState<Record<string, boolean>>({});
   const [aberta, setAberta] = useState<string | null>(null);
   const [pesos, setPesos] = useState<Record<string, string>>({});
+  const [transps, setTransps] = useState<Record<string, string>>({});
+  const [salvandoTransp, setSalvandoTransp] = useState(false);
+  const queryClient = useQueryClient();
   const [aviso, setAviso] = useState("");
   const [confirmando, setConfirmando] = useState(false);
   const [foco, setFoco] = useState(0);
@@ -194,7 +241,9 @@ function PendenciasPage() {
         .map((c, i) => ({ c, i }))
         .sort(
           (a, b) =>
-            String(a.c.numero_solicitacao ?? "").localeCompare(String(b.c.numero_solicitacao ?? "")) ||
+            String(a.c.numero_solicitacao ?? "").localeCompare(
+              String(b.c.numero_solicitacao ?? ""),
+            ) ||
             Number(a.c.seq_solicitacao || 9999) - Number(b.c.seq_solicitacao || 9999) ||
             a.i - b.i,
         )
@@ -219,8 +268,9 @@ function PendenciasPage() {
   ).size;
   const semAlertaAConferir = todas.filter((c) => c.conferida !== "SIM" && !temAlerta(c));
   const antecipados = todas.filter((c) => temPend(c, "PAGAMENTO_ANTECIPADO"));
-  const linhaAberta = aberta ? todas.find((c) => idLinha(c) === aberta) ?? null : null;
-  const ocupado = comercialMutation.isPending || pesoMutation.isPending || conferirFreteMutation.isPending;
+  const linhaAberta = aberta ? (todas.find((c) => idLinha(c) === aberta) ?? null) : null;
+  const ocupado =
+    comercialMutation.isPending || pesoMutation.isPending || conferirFreteMutation.isPending;
 
   const patch = (c: PedidoConsolidado, campos: Partial<PedidoConsolidado>) => {
     if (!sessionId) return;
@@ -247,7 +297,9 @@ function PendenciasPage() {
     patchConsolidadoDebounced(
       sessionId,
       id,
-      empresa ? { remessa_industrializacao: empresa } : { remessa_industrializacao: "", status: valor },
+      empresa
+        ? { remessa_industrializacao: empresa }
+        : { remessa_industrializacao: "", status: valor },
     );
   };
 
@@ -271,8 +323,33 @@ function PendenciasPage() {
   const salvarPeso = async (c: PedidoConsolidado) => {
     const valor = Number(String(pesos[idLinha(c)] ?? "").replace(",", "."));
     if (!sessionId || !(valor > 0)) return;
-    const r = await pesoMutation.mutateAsync({ sid: sessionId, body: { id: idLinha(c), peso_kg: valor } });
+    const r = await pesoMutation.mutateAsync({
+      sid: sessionId,
+      body: { id: idLinha(c), peso_kg: valor },
+    });
     setAviso(r.message);
+  };
+
+  const salvarTransportadora = async (c: PedidoConsolidado) => {
+    const codigo = String(transps[idLinha(c)] ?? "").trim();
+    if (!sessionId || !codigo) return;
+    if (validado) {
+      setAviso(
+        "As cargas já foram montadas: informe a transportadora no Kanban, ao carregar a linha no caminhão.",
+      );
+      return;
+    }
+    setSalvandoTransp(true);
+    try {
+      await patchConsolidado(sessionId, idLinha(c), { transportadora_codigo: codigo });
+      await queryClient.invalidateQueries({ queryKey: ["consolidados", sessionId] });
+      setTransps((t) => ({ ...t, [idLinha(c)]: "" }));
+      setAviso(`Transportadora ${codigo} definida para ${c.cliente}.`);
+    } catch (e) {
+      setAviso(e instanceof Error ? e.message : "Não foi possível definir a transportadora.");
+    } finally {
+      setSalvandoTransp(false);
+    }
   };
 
   const montarCargas = async () => {
@@ -289,7 +366,10 @@ function PendenciasPage() {
         const id = idLinha(row);
         if (!salvarRegras[id]) continue;
         const draft = drafts[id] ?? row;
-        const chave = montarChaveRegraAprendizado(row.cliente_codigo, palavraChaveParaAprendizado(row));
+        const chave = montarChaveRegraAprendizado(
+          row.cliente_codigo,
+          palavraChaveParaAprendizado(row),
+        );
         if (chave && draft.status) regrasNovas[chave] = draft.status;
         const chaveMemoria = montarChaveMemoriaOperacional(row.observacao_comercial);
         if (chaveMemoria && draft.status) memoriaNovas[chaveMemoria] = draft.status;
@@ -307,7 +387,12 @@ function PendenciasPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const alvo = e.target as HTMLElement;
-      if (aberta || ensinando || alvo.closest("input, textarea, select, [role='combobox'], [role='listbox'], button")) return;
+      if (
+        aberta ||
+        ensinando ||
+        alvo.closest("input, textarea, select, [role='combobox'], [role='listbox'], button")
+      )
+        return;
       const atual = visiveis[foco];
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -355,7 +440,9 @@ function PendenciasPage() {
       }}
       className={cn(
         "rounded-full border px-3 py-1 text-sm",
-        filtro === id ? "border-accent bg-accent text-accent-foreground" : "bg-background hover:bg-muted",
+        filtro === id
+          ? "border-accent bg-accent text-accent-foreground"
+          : "bg-background hover:bg-muted",
       )}
     >
       {rotulo}
@@ -370,8 +457,8 @@ function PendenciasPage() {
           <h1 className="text-2xl font-bold tracking-tight">Conferência</h1>
           <p className="text-sm text-muted-foreground">
             Confira linha a linha, na ordem da lista
-            {todas[0]?.data_referencia ? ` de ${dataBR(todas[0].data_referencia)}` : ""}. Só linha conferida vai para o
-            Kanban.
+            {todas[0]?.data_referencia ? ` de ${dataBR(todas[0].data_referencia)}` : ""}. Só linha
+            conferida vai para o Kanban.
           </p>
         </div>
         <button
@@ -385,8 +472,16 @@ function PendenciasPage() {
               : "bg-accent text-accent-foreground hover:opacity-90",
           )}
         >
-          {confirmando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />}
-          {validado ? "Ir para o Kanban" : faltam > 0 ? `Montar cargas (faltam ${faltam})` : "Montar cargas"}
+          {confirmando ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Truck className="w-4 h-4" />
+          )}
+          {validado
+            ? "Ir para o Kanban"
+            : faltam > 0
+              ? `Montar cargas (faltam ${faltam})`
+              : "Montar cargas"}
         </button>
       </div>
 
@@ -407,7 +502,10 @@ function PendenciasPage() {
           {chip("frases", "Frases novas", frasesNovas)}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {antecipados.length > 0 && (
-              <BotaoCopiar rotulo={`E-mail p/ comercial (${antecipados.length})`} texto={mensagemComercial(antecipados)} />
+              <BotaoCopiar
+                rotulo={`E-mail p/ comercial (${antecipados.length})`}
+                texto={mensagemComercial(antecipados)}
+              />
             )}
             <button
               type="button"
@@ -421,7 +519,8 @@ function PendenciasPage() {
           </div>
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <Keyboard className="w-3.5 h-3.5" /> ↑ ↓ navega · <b>Enter</b> confere e desce · <b>Espaço</b> abre os detalhes
+          <Keyboard className="w-3.5 h-3.5" /> ↑ ↓ navega · <b>Enter</b> confere e desce ·{" "}
+          <b>Espaço</b> abre os detalhes
         </div>
       </div>
 
@@ -437,7 +536,9 @@ function PendenciasPage() {
         </div>
       )}
       {aviso && (
-        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm">{aviso}</div>
+        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm">
+          {aviso}
+        </div>
       )}
 
       <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
@@ -475,27 +576,43 @@ function PendenciasPage() {
                     i === foco && "outline outline-2 -outline-offset-2 outline-accent",
                   )}
                 >
-                  <td className="py-2 pl-4 pr-2 font-mono text-xs text-muted-foreground">{c.seq_solicitacao}</td>
+                  <td className="py-2 pl-4 pr-2 font-mono text-xs text-muted-foreground">
+                    {c.seq_solicitacao}
+                  </td>
                   <td className="py-2 pr-3">
                     <PedidoOf c={c} />
                   </td>
                   <td className="py-2 pr-3">
-                    <button type="button" className="text-left font-medium hover:underline" onClick={() => setAberta(id)}>
+                    <button
+                      type="button"
+                      className="text-left font-medium hover:underline"
+                      onClick={() => setAberta(id)}
+                    >
                       {d.cliente}
                     </button>
                     {ehRetiraOuColeta(c) && c.transportadora && (
-                      <span className="block text-[11px] text-muted-foreground">{c.transportadora.split(" - ")[0]}</span>
+                      <span className="block text-[11px] text-muted-foreground">
+                        {c.transportadora.split(" - ")[0]}
+                      </span>
                     )}
                   </td>
                   <td className="py-2 pr-3">{cidadeDe(d)}</td>
-                  <td className="py-2 pr-3 text-right whitespace-nowrap font-mono">{kg(c.peso_kg)}</td>
+                  <td className="py-2 pr-3 text-right whitespace-nowrap font-mono">
+                    {kg(c.peso_kg)}
+                  </td>
                   <td className="py-2 pr-3">
                     {validado ? (
                       <span className="text-xs">
-                        {empresaRemessa(d) ? `Industrialização (${empresaRemessa(d)})` : ROTULO_FRETE[d.status] ?? d.status}
+                        {empresaRemessa(d)
+                          ? `Industrialização (${empresaRemessa(d)})`
+                          : (ROTULO_FRETE[d.status] ?? d.status)}
                       </span>
                     ) : (
-                      <SeletorFrete valor={valorSeletorFrete(d)} readonly={false} onChange={(v) => mudarFrete(c, v)} />
+                      <SeletorFrete
+                        valor={valorSeletorFrete(d)}
+                        readonly={false}
+                        onChange={(v) => mudarFrete(c, v)}
+                      />
                     )}
                   </td>
                   <td className="py-2 pr-3">
@@ -521,49 +638,81 @@ function PendenciasPage() {
                             )}
                           />
                           <span className="flex flex-wrap items-center gap-1.5">
-                          {a.texto}
-                          {a.acao === "peso" && (
-                            <span className="inline-flex items-center gap-1">
-                              <input
-                                inputMode="decimal"
-                                placeholder="kg"
-                                className="w-20 rounded border border-input bg-background px-1.5 py-0.5 font-mono text-xs text-foreground"
-                                value={pesos[id] ?? ""}
-                                onChange={(e) => setPesos((p) => ({ ...p, [id]: e.target.value }))}
-                                onKeyDown={(e) => e.key === "Enter" && void salvarPeso(c)}
-                              />
+                            {a.texto}
+                            {a.acao === "peso" && (
+                              <span className="inline-flex items-center gap-1">
+                                <input
+                                  inputMode="decimal"
+                                  placeholder="kg"
+                                  className="w-20 rounded border border-input bg-background px-1.5 py-0.5 font-mono text-xs text-foreground"
+                                  value={pesos[id] ?? ""}
+                                  onChange={(e) =>
+                                    setPesos((p) => ({ ...p, [id]: e.target.value }))
+                                  }
+                                  onKeyDown={(e) => e.key === "Enter" && void salvarPeso(c)}
+                                />
+                                <button
+                                  type="button"
+                                  disabled={ocupado}
+                                  className="rounded bg-accent px-2 py-0.5 text-[11px] text-accent-foreground"
+                                  onClick={() => void salvarPeso(c)}
+                                >
+                                  Salvar
+                                </button>
+                              </span>
+                            )}
+                            {a.acao === "transportadora" && (
+                              <span className="inline-flex items-center gap-1">
+                                <input
+                                  inputMode="numeric"
+                                  placeholder="cód. transp."
+                                  title="Código da transportadora na base (quando o representante disser qual é)"
+                                  className="w-24 rounded border border-input bg-background px-1.5 py-0.5 font-mono text-xs text-foreground"
+                                  value={transps[id] ?? ""}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) =>
+                                    setTransps((t) => ({ ...t, [id]: e.target.value }))
+                                  }
+                                  onKeyDown={(e) => {
+                                    e.stopPropagation();
+                                    if (e.key === "Enter") void salvarTransportadora(c);
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  disabled={salvandoTransp || !(transps[id] ?? "").trim()}
+                                  className="rounded bg-accent px-2 py-0.5 text-[11px] text-accent-foreground disabled:opacity-50"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void salvarTransportadora(c);
+                                  }}
+                                >
+                                  Definir
+                                </button>
+                              </span>
+                            )}
+                            {a.acao === "frase" && a.frase && (
+                              <button
+                                type="button"
+                                className="rounded border border-amber-600/50 px-2 py-0.5 text-[11px] text-amber-800 hover:bg-amber-50"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEnsinando(a.frase!);
+                                }}
+                              >
+                                Ensinar
+                              </button>
+                            )}
+                            {a.acao === "comercial" && (
                               <button
                                 type="button"
                                 disabled={ocupado}
-                                className="rounded bg-accent px-2 py-0.5 text-[11px] text-accent-foreground"
-                                onClick={() => void salvarPeso(c)}
+                                className="rounded border border-emerald-600/50 px-2 py-0.5 text-[11px] text-emerald-700 hover:bg-emerald-50"
+                                onClick={() => void comercialLiberou(c)}
                               >
-                                Salvar
+                                Comercial liberou
                               </button>
-                            </span>
-                          )}
-                          {a.acao === "frase" && a.frase && (
-                            <button
-                              type="button"
-                              className="rounded border border-amber-600/50 px-2 py-0.5 text-[11px] text-amber-800 hover:bg-amber-50"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setEnsinando(a.frase!);
-                              }}
-                            >
-                              Ensinar
-                            </button>
-                          )}
-                          {a.acao === "comercial" && (
-                            <button
-                              type="button"
-                              disabled={ocupado}
-                              className="rounded border border-emerald-600/50 px-2 py-0.5 text-[11px] text-emerald-700 hover:bg-emerald-50"
-                              onClick={() => void comercialLiberou(c)}
-                            >
-                              Comercial liberou
-                            </button>
-                          )}
+                            )}
                           </span>
                         </span>
                       ))}
@@ -581,9 +730,15 @@ function PendenciasPage() {
                       }}
                       className={cn(
                         "inline-flex h-8 w-8 items-center justify-center rounded-md border",
-                        ok ? "border-emerald-600 bg-emerald-600 text-white" : "bg-background hover:bg-muted",
+                        ok
+                          ? "border-emerald-600 bg-emerald-600 text-white"
+                          : "bg-background hover:bg-muted",
                       )}
-                      title={ok ? `Conferida ${c.conferida_em ?? ""} — clique para desfazer` : "Conferir (Enter)"}
+                      title={
+                        ok
+                          ? `Conferida ${c.conferida_em ?? ""} — clique para desfazer`
+                          : "Conferir (Enter)"
+                      }
                     >
                       <Check className="w-4 h-4" />
                     </button>
@@ -594,7 +749,9 @@ function PendenciasPage() {
             {!visiveis.length && (
               <tr>
                 <td colSpan={8} className="p-8 text-center text-sm text-muted-foreground">
-                  {filtro === "faltam" ? "Tudo conferido. Pode montar as cargas." : "Nenhuma linha neste filtro."}
+                  {filtro === "faltam"
+                    ? "Tudo conferido. Pode montar as cargas."
+                    : "Nenhuma linha neste filtro."}
                 </td>
               </tr>
             )}
@@ -622,7 +779,9 @@ function PendenciasPage() {
         draft={linhaAberta ? linha(linhaAberta) : null}
         readonly={validado}
         salvarRegra={linhaAberta ? !!salvarRegras[idLinha(linhaAberta)] : false}
-        onSalvarRegra={(v) => linhaAberta && setSalvarRegras((p) => ({ ...p, [idLinha(linhaAberta)]: v }))}
+        onSalvarRegra={(v) =>
+          linhaAberta && setSalvarRegras((p) => ({ ...p, [idLinha(linhaAberta)]: v }))
+        }
         onPatch={(campos) => linhaAberta && patch(linhaAberta, campos)}
         onFrete={(v) => linhaAberta && mudarFrete(linhaAberta, v)}
         onClose={() => setAberta(null)}
@@ -679,7 +838,10 @@ function SeletorFrete({
   );
 }
 
-const CAMPOS_EDITAVEIS: { campo: "cliente" | "bairro" | "cidade" | "cep" | "representante"; rotulo: string }[] = [
+const CAMPOS_EDITAVEIS: {
+  campo: "cliente" | "bairro" | "cidade" | "cep" | "representante";
+  rotulo: string;
+}[] = [
   { campo: "cliente", rotulo: "Cliente" },
   { campo: "cidade", rotulo: "Cidade" },
   { campo: "bairro", rotulo: "Bairro" },
@@ -741,7 +903,11 @@ function DetalheLinha({
                 <div className="flex flex-wrap gap-1.5">
                   {(c.pendencias ?? []).map((p) => (
                     <Badge key={p} variant="outline" className="text-[11px]">
-                      {{ CONSULTA_REPRESENTANTE: "Consultar representante", PAGAMENTO_ANTECIPADO: "Aguardando comercial", PESO_ZERADO: "Peso zerado" }[p] ?? p}
+                      {{
+                        CONSULTA_REPRESENTANTE: "Consultar representante",
+                        PAGAMENTO_ANTECIPADO: "Aguardando comercial",
+                        PESO_ZERADO: "Peso zerado",
+                      }[p] ?? p}
                     </Badge>
                   ))}
                 </div>
@@ -755,11 +921,20 @@ function DetalheLinha({
               </div>
 
               <div className="space-y-1">
-                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Frete</div>
-                <SeletorFrete valor={valorSeletorFrete(draft)} readonly={readonly} onChange={onFrete} />
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                  Frete
+                </div>
+                <SeletorFrete
+                  valor={valorSeletorFrete(draft)}
+                  readonly={readonly}
+                  onChange={onFrete}
+                />
                 {!readonly && draft.status !== c.status && !empresaRemessa(draft) && (
                   <label className="mt-2 flex items-start gap-2 text-xs">
-                    <Checkbox checked={salvarRegra} onCheckedChange={(v) => onSalvarRegra(v === true)} />
+                    <Checkbox
+                      checked={salvarRegra}
+                      onCheckedChange={(v) => onSalvarRegra(v === true)}
+                    />
                     <span>
                       Aprender: da próxima vez, fazer igual para este cliente
                       <span className="block font-mono text-muted-foreground">
@@ -773,7 +948,9 @@ function DetalheLinha({
               <div className="grid grid-cols-2 gap-3">
                 {CAMPOS_EDITAVEIS.map(({ campo, rotulo }) => (
                   <label key={campo} className={cn("block", campo === "cliente" && "col-span-2")}>
-                    <span className="text-[11px] uppercase tracking-wider text-muted-foreground">{rotulo}</span>
+                    <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                      {rotulo}
+                    </span>
                     {readonly ? (
                       <div className="text-sm">{String(draft[campo] ?? "") || "—"}</div>
                     ) : (
@@ -788,7 +965,9 @@ function DetalheLinha({
               </div>
 
               <div>
-                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Observação do pedido</div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                  Observação do pedido
+                </div>
                 <div className="mt-1 whitespace-pre-wrap rounded-md bg-muted/40 px-3 py-2 text-sm">
                   {c.observacao_comercial || "—"}
                 </div>
@@ -796,7 +975,9 @@ function DetalheLinha({
               {c.obs_recebimento && info("Horário de recebimento", c.obs_recebimento)}
               {c.auditoria && (
                 <div>
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Histórico</div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                    Histórico
+                  </div>
                   <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
                     {c.auditoria.split(" | ").map((a, i) => (
                       <div key={i}>{a}</div>
@@ -813,15 +994,36 @@ function DetalheLinha({
 }
 
 const OPCOES_FRASE: { valor: string; rotulo: string; ajuda: string }[] = [
-  { valor: "IGNORAR", rotulo: "Não importa para a logística", ajuda: "Financeiro, fiscal, boleto… não aparece mais." },
-  { valor: "FRETE", rotulo: "Muda o frete", ajuda: "Toda linha com esta frase vai para o frete escolhido." },
-  { valor: "FATURAR_APOS", rotulo: "Prazo: só faturar a partir da data", ajuda: "A data é lida da frase em cada pedido." },
-  { valor: "ENTREGAR_ATE", rotulo: "Prazo: entregar até a data", ajuda: "Avisa e fica vermelho se o prazo passou." },
-  { valor: "AVISAR", rotulo: "Sempre me avisar", ajuda: "Mostra a frase toda vez (embalagem, parcial, ligar para alguém…)." },
+  {
+    valor: "IGNORAR",
+    rotulo: "Não importa para a logística",
+    ajuda: "Financeiro, fiscal, boleto… não aparece mais.",
+  },
+  {
+    valor: "FRETE",
+    rotulo: "Muda o frete",
+    ajuda: "Toda linha com esta frase vai para o frete escolhido.",
+  },
+  {
+    valor: "FATURAR_APOS",
+    rotulo: "Prazo: só faturar a partir da data",
+    ajuda: "A data é lida da frase em cada pedido.",
+  },
+  {
+    valor: "ENTREGAR_ATE",
+    rotulo: "Prazo: entregar até a data",
+    ajuda: "Avisa e fica vermelho se o prazo passou.",
+  },
+  {
+    valor: "AVISAR",
+    rotulo: "Sempre me avisar",
+    ajuda: "Mostra a frase toda vez (embalagem, parcial, ligar para alguém…).",
+  },
   {
     valor: "INDUSTRIALIZACAO",
     rotulo: "Remessa para industrialização",
-    ajuda: "Peso zerado: a logística leva até a empresa escolhida. Com peso: já voltou, segue o frete da linha.",
+    ajuda:
+      "Peso zerado: a logística leva até a empresa escolhida. Com peso: já voltou, segue o frete da linha.",
   },
 ];
 const PRECISA_ESCOLHA: Record<string, boolean> = { FRETE: true, INDUSTRIALIZACAO: true };
@@ -853,7 +1055,8 @@ function EnsinarFrase({
           <div className="mt-4 space-y-4">
             <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">“{frase.texto}”</div>
             <p className="text-xs text-muted-foreground">
-              Vale para sempre, inclusive com outras datas e números. A opção marcada é a sugestão do sistema — confira.
+              Vale para sempre, inclusive com outras datas e números. A opção marcada é a sugestão
+              do sistema — confira.
             </p>
             <div className="space-y-2">
               {OPCOES_FRASE.map((o) => (
@@ -871,7 +1074,8 @@ function EnsinarFrase({
                     checked={significado === o.valor}
                     onChange={() => {
                       setSignificado(o.valor);
-                      if (o.valor !== significado) setStatus(o.valor === frase.sugestao ? frase.sugestao_status || "" : "");
+                      if (o.valor !== significado)
+                        setStatus(o.valor === frase.sugestao ? frase.sugestao_status || "" : "");
                     }}
                   />
                   <span>
@@ -923,7 +1127,11 @@ function EnsinarFrase({
               </label>
             )}
             <div className="flex justify-end gap-2">
-              <button type="button" className="rounded-md border px-4 py-2 text-sm" onClick={onClose}>
+              <button
+                type="button"
+                className="rounded-md border px-4 py-2 text-sm"
+                onClick={onClose}
+              >
                 Cancelar
               </button>
               <button

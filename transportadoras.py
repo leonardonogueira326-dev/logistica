@@ -7,6 +7,10 @@ Ordem de confiança:
   2. endereço que veio no PDF depois do nome ("RODOVIASUL - RUA X, 105, SAO PAULO - 02178-040"),
      só quando traz a cidade;
   3. nada: a linha avisa "transportadora sem endereço — cadastre".
+
+"TRANSPORTADORA A DEFINIR" (ex.: cód. 1110) não é uma transportadora: o
+representante ainda vai dizer qual é. A linha fica parada no representante
+(pendencias.py) até ele liberar e informar a transportadora.
 """
 from __future__ import annotations
 
@@ -38,7 +42,14 @@ _COLUNAS = {
 _RUA = re.compile(r"^(R\.?|RUA|AV\.?|AVENIDA|ROD\.?|RODOVIA|ESTR\.?|ESTRADA|AL\.?|ALAMEDA|TRAV\.?|PCA|PRACA|VIA|KM)\b")
 _CEP = re.compile(r"\b(\d{5})-?(\d{3})\b")
 
+_A_DEFINIR = re.compile(r"\bA\s+(DEFINIR|COMBINAR|CONFIRMAR)\b")
+
 _cache: dict[str, Any] = {}
+
+
+def a_definir(texto: str) -> bool:
+    """'01110 - TRANSPORTADORA A DEFINIR - , - 00000-000' -> True."""
+    return bool(_A_DEFINIR.search(_sem_acento(normalizar_texto(texto or ""))))
 
 
 def _sem_acento(texto: str) -> str:
@@ -153,6 +164,8 @@ def endereco_transportadora(
 
 def rotulo(info: dict[str, str]) -> str:
     """'L B LOG — R. HEROI DA FEB, 123 · VILA X · SAO PAULO'  (vai no card, na conferência e no romaneio)."""
+    if a_definir(info.get("nome", "")):
+        return "Transportadora a definir — aguardando o representante informar"
     if not info.get("cidade"):
         cod = f" (cód. {info['codigo']})" if info.get("codigo") else ""
         return f"Transportadora {info.get('nome', '')}{cod} — sem endereço, cadastre na base de transportadoras"

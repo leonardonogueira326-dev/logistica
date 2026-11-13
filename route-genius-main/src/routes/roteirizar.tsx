@@ -217,6 +217,7 @@ function RoteirizarPage() {
     forcar?: boolean;
     liberar_representante?: boolean;
     autorizado_por?: string;
+    transportadora_codigo?: string;
   }) => {
     const result = await moverMutation.mutateAsync({ sid: sessionId, body: payload });
     setLastWarning(result.warning ?? "");

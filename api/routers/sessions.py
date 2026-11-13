@@ -81,7 +81,11 @@ from frases import FRETE as SIG_FRETE  # noqa: E402
 from frases import INDUSTRIALIZACAO as SIG_INDUSTRIALIZACAO  # noqa: E402
 from destino_entrega import destino_remessa, empresas_remessa, rotulo as rotulo_entrega  # noqa: E402
 from extrator_clientes import obter_lookup_clientes  # noqa: E402
-from transportadoras import campos_da_linha as campos_transportadora, endereco_transportadora  # noqa: E402
+from transportadoras import (  # noqa: E402
+    campos_da_linha as campos_transportadora,
+    carregar as carregar_transportadoras,
+    endereco_transportadora,
+)
 from frases import analisar as analisar_frases  # noqa: E402
 from frases import carregar as carregar_frases  # noqa: E402
 from frases import ensinar as ensinar_frase  # noqa: E402
@@ -415,6 +419,32 @@ def _desfazer_transportadora(item: dict[str, Any]) -> None:
             item.pop(k, None)
 
 
+def _trocar_transportadora_na_linha(item: dict[str, Any], codigo: str, params: dict[str, Any]) -> None:
+    """Conferência: o representante disse qual é a transportadora (código da base)."""
+    from normalizador import normalizar_codigo_cliente
+
+    cod = normalizar_codigo_cliente(codigo or "")
+    base = carregar_transportadoras()
+    if not cod or cod not in base:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A transportadora {(cod or codigo).lstrip('0') or codigo} não está na base de transportadoras.",
+        )
+    info = endereco_transportadora(cod, "", base)
+    if item.get("status") == config.COD_TERCEIRO_HUB and "_antes_hub" not in item:
+        item["_antes_hub"] = {k: item[k] for k in _CAMPOS_HUB if k in item}
+    item["transportadora"] = info.get("nome", "")
+    item["transportadora_codigo"] = cod
+    if item.get("status") == config.COD_TERCEIRO_HUB:
+        item.update(campos_transportadora(info, params))
+        if not info.get("horario"):
+            item["obs_recebimento"] = ""
+    agora = datetime.now(timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
+    item["auditoria"] = (
+        item.get("auditoria", "") + f" | TRANSPORTADORA DEFINIDA {agora}: {info.get('nome', '')} (cód. {cod.lstrip('0')})"
+    ).strip(" |")
+
+
 @router.get("", tags=["sessions"])
 def listar_quadros(limite: int = 30) -> list[dict[str, Any]]:
     """Quadros do dia salvos no servidor (para abrir de qualquer PC)."""
@@ -688,6 +718,9 @@ def patch_consolidado(
     item = ingest["consolidados"][found_idx]
     updates = patch.model_dump(exclude_none=True)
     remessa_pedida = updates.pop("remessa_industrializacao", None)
+    transp_codigo = updates.pop("transportadora_codigo", None)
+    if transp_codigo is not None:
+        _trocar_transportadora_na_linha(item, transp_codigo, params)
 
     if updates.get("representante") and updates["representante"] != item.get("representante"):
         # O sistema aprende: próximas solicitações deste cliente já vêm com este nome.
@@ -1245,6 +1278,63 @@ def desfazer(session_id: str) -> MoverPedidoResponseSchema:
     )
 
 
+def _definir_transportadora(session_id: str, ids: list[str], codigo: str) -> list[str]:
+    """
+    "Transportadora a definir": o representante informou a transportadora.
+    Troca nas linhas (conferência e quadro) e o destino passa a ser o endereço dela.
+    Só mexe nas linhas que estão como "a definir". Retorna os ids alterados.
+    """
+    from normalizador import normalizar_codigo_cliente
+    from pendencias import transportadora_a_definir
+
+    cod = normalizar_codigo_cliente(codigo or "")
+    if not cod:
+        return []
+    base = carregar_transportadoras()
+    if cod not in base:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A transportadora {cod.lstrip('0') or cod} não está na base de transportadoras.",
+        )
+    info = endereco_transportadora(cod, "", base)
+    campos = campos_transportadora(info, carregar_parametros())
+    campos.update(transportadora=info.get("nome", ""), transportadora_codigo=cod)
+    if not info.get("horario"):
+        campos["obs_recebimento"] = ""
+    _, consolidados, _ = _get_active_consolidados(session_id)
+    alterados: list[str] = []
+    for id_bruto in ids:
+        id_linha = id_bruto.split("@")[0]
+        ref = next((c for c in consolidados if mesma_linha(c, id_linha)), None)
+        if ref is None or not transportadora_a_definir(ref) or ref.id_item in alterados:
+            continue
+        agora = datetime.now(timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
+        patch = dict(campos)
+        patch["auditoria"] = (
+            ref.auditoria + f" | TRANSPORTADORA DEFINIDA {agora}: {info.get('nome', '')} (cód. {cod.lstrip('0')})"
+        ).strip(" |")
+        if _patch_consolidado_session(session_id, ref.id_item or id_linha, patch):
+            alterados.append(ref.id_item or id_linha)
+    if not alterados:
+        return []
+    # O quadro guarda uma cópia de cada linha: atualiza também (sem passo no "Desfazer")
+    data = store.load_roteirizacao(session_id)
+    if data:
+        listas = [data.get("backlog", []), data.get("backlog_futuro", []), data.get("backlog_local", [])]
+        listas += list((data.get("itens_por_veiculo") or {}).values())
+        listas += list((data.get("itens_retorno_por_veiculo") or {}).values())
+        for lista in listas:
+            for entry in lista:
+                if not isinstance(entry, dict):
+                    continue
+                if any(mesma_linha(entry, a) for a in alterados):
+                    for k, v in campos.items():
+                        if k in entry:
+                            entry[k] = "" if v is None and isinstance(entry[k], str) else v
+        store.save_roteirizacao(session_id, data, desfazivel=False)
+    return alterados
+
+
 @router.post("/{session_id}/mover-lote", response_model=MoverPedidoResponseSchema)
 def mover_lote(session_id: str, body: MoverLoteSchema) -> MoverPedidoResponseSchema:
     """
@@ -1252,6 +1342,8 @@ def mover_lote(session_id: str, body: MoverLoteSchema) -> MoverPedidoResponseSch
     "Desfazer". O que não pode ir (travado, precisa do representante, sem espaço
     sem forçar) fica onde está e é avisado.
     """
+    if body.liberar_representante and body.transportadora_codigo.strip():
+        _definir_transportadora(session_id, body.ids, body.transportadora_codigo)
     data = store.load_roteirizacao(session_id)
     if not data:
         raise HTTPException(status_code=404, detail="Roteirização não executada.")
@@ -1308,6 +1400,8 @@ def mover_lote(session_id: str, body: MoverLoteSchema) -> MoverPedidoResponseSch
 
 @router.post("/{session_id}/mover", response_model=MoverPedidoResponseSchema)
 def mover_pedido(session_id: str, body: MoverPedidoSchema) -> MoverPedidoResponseSchema:
+    if body.liberar_representante and body.transportadora_codigo.strip():
+        _definir_transportadora(session_id, [body.numero_pedido], body.transportadora_codigo)
     data = store.load_roteirizacao(session_id)
     if not data:
         raise HTTPException(status_code=404, detail="Roteirização não executada.")
