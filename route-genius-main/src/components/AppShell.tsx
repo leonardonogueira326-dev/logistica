@@ -166,22 +166,80 @@ function AvisoSincronizacao() {
   );
 }
 
-/** Código na pasta foi atualizado mas o servidor antigo continua rodando. */
-function AvisoVersao() {
-  const { data } = useQuery({
+type Versao = {
+  rodando: string;
+  no_disco: string;
+  github: string;
+  desatualizado: boolean;
+  atras_do_github: boolean;
+  atualizacao: { estado: string; quando: string; mensagem: string };
+};
+
+function useVersao() {
+  return useQuery({
     queryKey: ["versao"],
     queryFn: async () => {
       const r = await fetch("/api/versao");
-      return (await r.json()) as { rodando: string; no_disco: string; desatualizado: boolean };
+      return (await r.json()) as Versao;
     },
     refetchInterval: 60_000,
     retry: false,
   });
-  if (!data?.desatualizado) return null;
+}
+
+/** Selo no topo: este PC está com o mesmo código do GitHub? */
+function SeloVersao() {
+  const { data } = useVersao();
+  if (!data?.rodando) return null;
+  const igual = !!data.github && !data.atras_do_github && !data.desatualizado;
+  const velho = data.atras_do_github || data.desatualizado || data.atualizacao.estado === "ERRO";
   return (
-    <div className="border-b border-amber-500/40 bg-amber-500/15 px-6 py-2 text-sm text-amber-900">
-      <b>Tem uma versão nova do sistema.</b> Feche a janela preta e abra o <b>iniciar.bat</b> de
-      novo (depois Ctrl+F5) — até lá você está usando a versão antiga.
+    <div
+      title={
+        igual
+          ? `Este PC está com a mesma versão do GitHub (${data.rodando}).`
+          : velho
+            ? `Este PC roda ${data.rodando}; o GitHub tem ${data.github || "?"}.`
+            : "Ainda não consegui conferir com o GitHub."
+      }
+      className={cn(
+        "flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-medium",
+        igual && "bg-success/10 border-success/30 text-success",
+        velho && "bg-destructive/10 border-destructive/30 text-destructive",
+        !igual && !velho && "bg-muted border-border text-muted-foreground",
+      )}
+    >
+      <span
+        className={cn(
+          "inline-flex rounded-full h-2 w-2",
+          igual ? "bg-success" : velho ? "bg-destructive" : "bg-muted-foreground/50",
+        )}
+      />
+      {igual ? "Versão em dia" : velho ? "Versão antiga" : "Versão: conferindo…"}
+    </div>
+  );
+}
+
+/** Faixa de aviso quando o código deste PC ficou para trás. */
+function AvisoVersao() {
+  const { data } = useVersao();
+  if (!data) return null;
+  const erro = data.atualizacao?.estado === "ERRO";
+  if (!erro && !data.desatualizado && !data.atras_do_github) return null;
+  return (
+    <div className="border-b border-destructive/40 bg-destructive/10 px-6 py-2 text-sm text-destructive">
+      {erro ? (
+        <>
+          <b>Não consegui atualizar o código deste PC</b> ({data.atualizacao.quando}) — você está
+          usando uma versão antiga. Feche a janela preta e abra o <b>iniciar.bat</b> de novo; se
+          continuar, chame o Claude (detalhes em logs\codigo.log).
+        </>
+      ) : (
+        <>
+          <b>Tem uma versão nova do sistema.</b> Feche a janela preta e abra o <b>iniciar.bat</b> de
+          novo (depois Ctrl+F5) — até lá você está usando a versão antiga.
+        </>
+      )}
     </div>
   );
 }
@@ -314,6 +372,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6">
           <div className="flex items-center gap-3">
             <StatusIA />
+            <SeloVersao />
             <StatusSincronizacao />
             <QuadroDoDia />
             <div className="text-xs text-muted-foreground hidden lg:block">
