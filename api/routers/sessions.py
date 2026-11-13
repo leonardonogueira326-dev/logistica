@@ -1208,8 +1208,50 @@ def get_roteirizacao(session_id: str) -> RoteirizacaoSchema:
     data.setdefault("viagens_retorno_habilitadas", [])
     data.setdefault("metricas_retorno", {})
     motor = _motor_from_roteirizacao(data)
+    if _tirar_transportadora_a_definir(motor, session_id):
+        store.save_roteirizacao(session_id, motor.para_dict(), desfazivel=False)
     _enriquecer_teo_motor(motor)
     return _roteirizacao_from_motor(motor, session_id)
+
+
+def _tirar_transportadora_a_definir(motor: MotorLogistica, session_id: str) -> list[str]:
+    """
+    "Transportadora a definir" não sobe no caminhão sem o representante liberar.
+    Linha que já estava num caminhão (quadro montado antes da regra, ou a
+    transportadora voltou a ficar a definir) volta para o quadro do representante.
+    """
+    from pendencias import transportadora_a_definir
+
+    try:
+        _, consolidados, _ = _get_active_consolidados(session_id)
+    except HTTPException:
+        return []
+    limite = _limite_consulta()
+    no_caminhao = {
+        (it.id_item or it.numero_pedido)
+        for itens in motor.itens_por_veiculo.values()
+        for it in itens
+    }
+    tirados: list[str] = []
+    for c in consolidados:
+        id_linha = c.id_item or c.numero_pedido
+        if id_linha not in no_caminhao or not transportadora_a_definir(c):
+            continue
+        if CONSULTA_REPRESENTANTE not in calc_pendencias(c, limite):
+            continue  # representante já liberou
+        motivo = motivo_parado(c, limite)
+        if motor.tirar_do_caminhao_por_pendencia(id_linha, motivo):
+            for entry in motor.backlog_futuro:
+                if mesma_linha(entry, id_linha):
+                    entry.update(
+                        pendencias=",".join(calc_pendencias(c, limite)),
+                        representante=c.representante,
+                        transportadora=c.transportadora,
+                        transportadora_codigo=c.transportadora_codigo,
+                        consulta_representante=c.consulta_representante or "",
+                    )
+            tirados.append(id_linha)
+    return tirados
 
 
 def _romaneio_planilha(session_id: str, rote: dict[str, Any], somente_veiculo: str = ""):
