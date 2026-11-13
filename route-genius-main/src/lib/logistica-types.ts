@@ -311,6 +311,8 @@ export interface PainelVeiculo {
   sem_localizacao: string[];
   /** O sistema está buscando essas localizações agora (sozinho, em segundo plano) */
   localizando?: boolean;
+  /** Última tentativa de localizar falhou (ex.: serviço de mapas bloqueado na rede) */
+  erro_localizacao?: string;
   sugestao_corredor: string;
   sugestao_ids?: string[];
   sugestao_destino?: string;

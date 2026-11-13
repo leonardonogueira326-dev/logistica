@@ -121,7 +121,9 @@ export function checklist(
           ? "Todas as paradas no mapa"
           : painel?.localizando
             ? `Localizando ${semLocal} carga(s) no mapa…`
-            : `${semLocal} carga(s) sem localização no mapa`,
+            : painel?.erro_localizacao
+              ? `${semLocal} carga(s) sem localização — ${painel.erro_localizacao}`
+              : `${semLocal} carga(s) sem localização no mapa`,
       acao: "localizar",
     },
     {

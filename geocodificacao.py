@@ -151,6 +151,32 @@ def precisa_refazer(registro: dict[str, Any] | None, endereco: dict[str, str]) -
 
 
 # ------------------------------------------------------------------- consulta
+def _contexto_ssl():
+    """Certificados do Windows + os exportados pelo instalador (rede da empresa intercepta SSL)."""
+    import os
+    import ssl
+
+    ctx = ssl.create_default_context()
+    pem = Path(os.environ.get("LOCALAPPDATA", "")) / "logistica-ca" / "raizes-windows.pem"
+    if os.environ.get("LOCALAPPDATA") and pem.is_file():
+        try:
+            ctx.load_verify_locations(str(pem))
+        except (OSError, ssl.SSLError):
+            pass
+    return ctx
+
+
+def _registrar_erro(detalhe: str) -> None:
+    """logs/mapa.log: para descobrir por que o mapa não localiza neste PC."""
+    try:
+        pasta = RAIZ / "logs"
+        pasta.mkdir(exist_ok=True)
+        with open(pasta / "mapa.log", "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%d/%m/%Y %H:%M:%S')} {detalhe}\n")
+    except OSError:
+        pass
+
+
 def buscar_nominatim(params: dict[str, str]) -> Optional[tuple[float, float]]:
     global _ultima_consulta
     with _trava:
@@ -161,10 +187,22 @@ def buscar_nominatim(params: dict[str, str]) -> Optional[tuple[float, float]]:
     query = {**{k: v for k, v in params.items() if v}, "format": "json", "limit": "1", "countrycodes": "br"}
     req = urllib.request.Request(f"{NOMINATIM_URL}?{urllib.parse.urlencode(query)}", headers={"User-Agent": USER_AGENT})
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=20, context=_contexto_ssl()) as resp:
             achados = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, OSError):
-        raise ConnectionError("Serviço de mapas indisponível (sem internet ou bloqueado)")
+    except urllib.error.HTTPError as exc:
+        _registrar_erro(f"HTTP {exc.code} {exc.reason}")
+        motivo = "serviço de mapas recusou (muitas consultas?)" if exc.code in (403, 429) else f"erro {exc.code}"
+        raise ConnectionError(f"Serviço de mapas indisponível ({motivo})") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, OSError) as exc:
+        detalhe = str(getattr(exc, "reason", "") or exc)
+        _registrar_erro(detalhe)
+        if "CERTIFICATE" in detalhe.upper() or "SSL" in detalhe.upper():
+            motivo = "certificado da rede da empresa"
+        elif "timed out" in detalhe or isinstance(exc, TimeoutError):
+            motivo = "sem resposta — rede pode estar bloqueando"
+        else:
+            motivo = "sem internet ou bloqueado na rede"
+        raise ConnectionError(f"Serviço de mapas indisponível ({motivo})") from exc
     if not achados:
         return None
     return float(achados[0]["lat"]), float(achados[0]["lon"])
