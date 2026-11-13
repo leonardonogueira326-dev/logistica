@@ -7,6 +7,7 @@ Arquivo: data/configuracao_operacional.json
 from __future__ import annotations
 
 import json
+import armazenamento
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from param_manager import _seed_params
 PROJECT_ROOT = Path(__file__).resolve().parent
 ARQUIVO_CONFIG = PROJECT_ROOT / "data" / "configuracao_operacional.json"
 
+_marca_cache = ""
 _cache_config: dict[str, Any] | None = None
 
 
@@ -96,14 +98,17 @@ def _seed_configuracao() -> dict[str, Any]:
 
 
 def carregar_configuracao(recarregar: bool = False) -> dict[str, Any]:
-    global _cache_config
-    if _cache_config is not None and not recarregar:
+    global _cache_config, _marca_cache
+    # cópia em memória só vale enquanto o documento não mudou (ex.: chegou do outro PC)
+    marca_atual = armazenamento.marca_rapida(ARQUIVO_CONFIG)
+    if _cache_config is not None and not recarregar and marca_atual == _marca_cache:
         return deepcopy(_cache_config)
+    _marca_cache = marca_atual
 
     ARQUIVO_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    if ARQUIVO_CONFIG.exists():
+    if armazenamento.existe(ARQUIVO_CONFIG):
         try:
-            bruto = json.loads(ARQUIVO_CONFIG.read_text(encoding="utf-8"))
+            bruto = armazenamento.ler(ARQUIVO_CONFIG)
             if isinstance(bruto, dict):
                 _cache_config = bruto
                 return deepcopy(_cache_config)
@@ -121,10 +126,7 @@ def salvar_configuracao(cfg: dict[str, Any]) -> str:
     ARQUIVO_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     payload = deepcopy(cfg)
     payload.setdefault("_versao", "1")
-    ARQUIVO_CONFIG.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    armazenamento.gravar(ARQUIVO_CONFIG, payload)
     _cache_config = payload
     return str(ARQUIVO_CONFIG)
 

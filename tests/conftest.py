@@ -10,3 +10,6 @@ import os
 
 # Testes não consultam o serviço de mapas sozinhos (localização automática do quadro)
 os.environ.setdefault("LOGISTICA_SEM_GEO_AUTO", "1")
+
+# Testes usam arquivos soltos; o banco local tem testes próprios (test_armazenamento.py)
+os.environ.setdefault("LOGISTICA_SEM_BANCO", "1")

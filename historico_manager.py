@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import armazenamento
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -39,10 +40,10 @@ def _arquivo_historico(data_ref: date | None = None) -> Path:
 
 
 def _carregar_arquivo(path: Path) -> dict[str, Any]:
-    if not path.exists():
+    if not armazenamento.existe(path):
         return {"pedidos": {}, "indice_pedido": {}, "indice_cliente": {}}
     try:
-        bruto = json.loads(path.read_text(encoding="utf-8"))
+        bruto = armazenamento.ler(path)
         if isinstance(bruto, dict):
             bruto.setdefault("pedidos", {})
             bruto.setdefault("indice_pedido", {})
@@ -55,7 +56,7 @@ def _carregar_arquivo(path: Path) -> dict[str, Any]:
 
 def _salvar_arquivo(path: Path, payload: dict[str, Any]) -> None:
     HISTORICO_DIR.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    armazenamento.gravar(path, payload)
 
 
 def _rebuild_cache_hashes() -> set[str]:

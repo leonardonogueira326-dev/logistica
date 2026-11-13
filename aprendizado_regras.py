@@ -8,6 +8,7 @@ Sem listas aninhadas — compatível com persistência futura.
 from __future__ import annotations
 
 import json
+import armazenamento
 import re
 import unicodedata
 from pathlib import Path
@@ -29,6 +30,7 @@ STATUS_PARA_TIPO_FRETE: dict[str, str] = {
     config.COD_BLOQUEIO_FISCAL: "",
 }
 
+_marca_cache = ""
 _cache_regras: dict[str, str] | None = None
 
 
@@ -53,14 +55,17 @@ def montar_chave_regra(codigo_cliente: str, palavra_chave: str) -> str:
 
 def carregar_regras(recarregar: bool = False) -> dict[str, str]:
     """Carrega regras aprendidas (cache em memória)."""
-    global _cache_regras
-    if _cache_regras is not None and not recarregar:
+    global _cache_regras, _marca_cache
+    # cópia em memória só vale enquanto o documento não mudou (ex.: chegou do outro PC)
+    marca_atual = armazenamento.marca_rapida(ARQUIVO_APRENDIZADO)
+    if _cache_regras is not None and not recarregar and marca_atual == _marca_cache:
         return _cache_regras
+    _marca_cache = marca_atual
 
     regras: dict[str, str] = {}
     try:
-        if ARQUIVO_APRENDIZADO.exists():
-            bruto = json.loads(ARQUIVO_APRENDIZADO.read_text(encoding="utf-8"))
+        if armazenamento.existe(ARQUIVO_APRENDIZADO):
+            bruto = armazenamento.ler(ARQUIVO_APRENDIZADO)
             if isinstance(bruto, dict):
                 for chave, valor in bruto.items():
                     if str(chave).startswith("_"):
@@ -93,10 +98,7 @@ def salvar_regras(regras: dict[str, str]) -> int:
         "_descricao": "Chave codigo_palavrachave -> status frete ensinado pelo operador",
         **merged,
     }
-    ARQUIVO_APRENDIZADO.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    armazenamento.gravar(ARQUIVO_APRENDIZADO, payload)
     _cache_regras = merged
     return novas
 

@@ -8,6 +8,7 @@ Consultada após aprendizado_regras.json e antes do regex.
 from __future__ import annotations
 
 import json
+import armazenamento
 import re
 import unicodedata
 from pathlib import Path
@@ -18,6 +19,7 @@ from aprendizado_regras import STATUS_PARA_TIPO_FRETE
 PROJECT_ROOT = Path(__file__).resolve().parent
 ARQUIVO_MEMORIA = PROJECT_ROOT / "data" / "memoria_operacional.json"
 
+_marca_cache = ""
 _cache_memoria: dict[str, str] | None = None
 
 
@@ -34,14 +36,17 @@ def normalizar_texto_memoria(observacao: str, descricao: str = "") -> str:
 
 
 def carregar_memoria(recarregar: bool = False) -> dict[str, str]:
-    global _cache_memoria
-    if _cache_memoria is not None and not recarregar:
+    global _cache_memoria, _marca_cache
+    # cópia em memória só vale enquanto o documento não mudou (ex.: chegou do outro PC)
+    marca_atual = armazenamento.marca_rapida(ARQUIVO_MEMORIA)
+    if _cache_memoria is not None and not recarregar and marca_atual == _marca_cache:
         return _cache_memoria
+    _marca_cache = marca_atual
 
     memoria: dict[str, str] = {}
     try:
-        if ARQUIVO_MEMORIA.exists():
-            bruto = json.loads(ARQUIVO_MEMORIA.read_text(encoding="utf-8"))
+        if armazenamento.existe(ARQUIVO_MEMORIA):
+            bruto = armazenamento.ler(ARQUIVO_MEMORIA)
             if isinstance(bruto, dict):
                 for chave, valor in bruto.items():
                     if str(chave).startswith("_"):
@@ -73,10 +78,7 @@ def salvar_memoria(entradas: dict[str, str]) -> int:
         "_descricao": "Texto normalizado da observacao/descricao -> status frete ensinado pelo operador",
         **merged,
     }
-    ARQUIVO_MEMORIA.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    armazenamento.gravar(ARQUIVO_MEMORIA, payload)
     _cache_memoria = merged
     return novas
 

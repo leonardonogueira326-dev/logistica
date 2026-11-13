@@ -8,6 +8,7 @@ A última equipe usada em cada caminhão vira sugestão para o próximo dia
 from __future__ import annotations
 
 import json
+import armazenamento
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,7 @@ def frota_cadastrada() -> list[dict[str, Any]]:
 
 def carregar_padrao() -> dict[str, dict[str, str]]:
     try:
-        dados = json.loads(ARQUIVO_PADRAO.read_text(encoding="utf-8"))
+        dados = armazenamento.ler(ARQUIVO_PADRAO)
         return {k: v for k, v in dados.items() if isinstance(v, dict)}
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
@@ -36,7 +37,7 @@ def lembrar(veiculo_id: str, equipe: dict[str, str]) -> None:
     dados = carregar_padrao()
     dados[veiculo_id] = {k: str(equipe.get(k, "") or "").strip() for k in ("motorista", "ajudante")}
     ARQUIVO_PADRAO.parent.mkdir(parents=True, exist_ok=True)
-    ARQUIVO_PADRAO.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+    armazenamento.gravar(ARQUIVO_PADRAO, dados)
 
 
 def equipe_inicial() -> dict[str, dict[str, str]]:
@@ -61,7 +62,7 @@ ARQUIVO_NOMES = RAIZ / "data" / "equipe_nomes.json"
 def nomes_conhecidos() -> dict[str, list[str]]:
     """Motoristas, ajudantes e placas já usados (lista para escolher na tela)."""
     try:
-        dados = json.loads(ARQUIVO_NOMES.read_text(encoding="utf-8"))
+        dados = armazenamento.ler(ARQUIVO_NOMES)
     except (FileNotFoundError, json.JSONDecodeError):
         dados = {}
     out = {k: [str(x) for x in dados.get(k, []) if str(x).strip()] for k in ("motoristas", "ajudantes", "placas")}
@@ -87,5 +88,4 @@ def guardar_nomes(equipe: dict[str, str]) -> None:
             mudou = True
     if mudou:
         ARQUIVO_NOMES.parent.mkdir(parents=True, exist_ok=True)
-        ARQUIVO_NOMES.write_text(json.dumps({k: sorted(v) for k, v in dados.items()}, ensure_ascii=False, indent=2),
-                                 encoding="utf-8")
+        armazenamento.gravar(ARQUIVO_NOMES, {k: sorted(v) for k, v in dados.items()})

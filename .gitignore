@@ -95,6 +95,7 @@ data/frases_conhecidas.json
 
 # Pilha do "Desfazer" da montagem de cargas (local de cada PC)
 .desfazer/
+data/local/
 # Equipe (nomes já usados e última equipe por caminhão) — vão pelo repositório de dados
 data/equipe_nomes.json
 data/equipe_padrao.json

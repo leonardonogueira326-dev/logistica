@@ -22,6 +22,7 @@ Cache: data/geocache.json (dados da empresa — não vai para o GitHub).
 from __future__ import annotations
 
 import json
+import armazenamento
 import threading
 import time
 import urllib.error
@@ -49,16 +50,14 @@ Buscador = Callable[[dict[str, str]], Optional[tuple[float, float]]]
 # ------------------------------------------------------------------- cache
 def carregar_cache() -> dict[str, dict[str, Any]]:
     try:
-        return json.loads(ARQUIVO_CACHE.read_text(encoding="utf-8"))
+        return armazenamento.ler(ARQUIVO_CACHE)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
 def salvar_cache(cache: dict[str, dict[str, Any]]) -> None:
     ARQUIVO_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = ARQUIVO_CACHE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(ARQUIVO_CACHE)
+    armazenamento.gravar(ARQUIVO_CACHE, cache, indent=1)
 
 
 def chave_cliente(codigo: str) -> str:

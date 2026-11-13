@@ -5,6 +5,7 @@ Cadastro mestre geolocalizado — JSON unificado (clientes + transportadoras).
 from __future__ import annotations
 
 import json
+import armazenamento
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
@@ -53,7 +54,7 @@ def carregar_cadastro_geolocalizado(recarregar: bool = False) -> dict[str, Any]:
         _cache = payload
         return deepcopy(_cache)
 
-    bruto = json.loads(path.read_text(encoding="utf-8"))
+    bruto = armazenamento.ler(path)
     if not isinstance(bruto, dict):
         bruto = {"registros": bruto if isinstance(bruto, list) else []}
 
@@ -92,7 +93,7 @@ def salvar_cadastro_geolocalizado(registros: list[dict[str, Any]]) -> str:
         "_gerado_em": date.today().isoformat(),
         "registros": registros,
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    armazenamento.gravar(path, payload)
     invalidar_cache_geolocalizado()
     return str(path)
 

@@ -15,6 +15,7 @@ e-mails) por coringas e compara com o que já conhece:
 from __future__ import annotations
 
 import json
+import armazenamento
 import re
 import unicodedata
 from datetime import datetime
@@ -102,7 +103,7 @@ def datas(frase: str) -> list[str]:
 
 def carregar(caminho: Path = ARQUIVO) -> dict[str, dict[str, Any]]:
     try:
-        return json.loads(caminho.read_text(encoding="utf-8"))
+        return armazenamento.ler(caminho)
     except Exception:
         return {}
 
@@ -124,7 +125,7 @@ def ensinar(
         "em": datetime.now().strftime("%d/%m/%Y"),
     }
     caminho.parent.mkdir(parents=True, exist_ok=True)
-    caminho.write_text(json.dumps(dic, ensure_ascii=False, indent=2), encoding="utf-8")
+    armazenamento.gravar(caminho, dic)
     return dic[k]
 
 

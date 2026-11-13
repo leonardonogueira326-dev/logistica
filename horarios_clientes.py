@@ -10,6 +10,7 @@ cliente > recebimento padrão (Mesa de Comando).
 from __future__ import annotations
 
 import json
+import armazenamento
 from pathlib import Path
 from typing import Any, Optional
 
@@ -23,7 +24,7 @@ PADRAO = "08:00 às 17:00"
 
 def carregar(arquivo: Path | None = None) -> dict[str, str]:
     try:
-        dados = json.loads((arquivo or ARQUIVO).read_text(encoding="utf-8"))
+        dados = armazenamento.ler(arquivo or ARQUIVO)
         return {str(k): str(v) for k, v in dados.items() if str(v).strip()}
     except (FileNotFoundError, json.JSONDecodeError, AttributeError):
         return {}
@@ -43,7 +44,7 @@ def salvar(codigo: str, horario: str, arquivo: Path | None = None) -> None:
     else:
         dados.pop(cod, None)
     arquivo.parent.mkdir(parents=True, exist_ok=True)
-    arquivo.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+    armazenamento.gravar(arquivo, dados)
 
 
 def janela_da_parada(
