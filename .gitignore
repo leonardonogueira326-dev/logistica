@@ -97,3 +97,5 @@ data/frases_conhecidas.json
 # Equipe (nomes já usados e última equipe por caminhão) — vão pelo repositório de dados
 data/equipe_nomes.json
 data/equipe_padrao.json
+# Horário de recebimento por cliente — vai pelo repositório de dados
+data/horarios_clientes.json

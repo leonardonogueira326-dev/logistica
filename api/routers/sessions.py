@@ -52,7 +52,7 @@ from models import PedidoConsolidado  # noqa: E402
 from motor_ingestao import MotorIngestao  # noqa: E402
 from motor_logistica import MotorLogistica  # noqa: E402
 import config  # noqa: E402
-from normalizador import formatar_kg, mesma_linha, normalizar_texto, resolver_rota_logistica  # noqa: E402
+from normalizador import formatar_kg, mesma_linha, normalizar_texto, resolver_rota_logistica, normalizar_codigo_cliente  # noqa: E402
 from pendencias import (  # noqa: E402
     CONSULTA_REPRESENTANTE,
     PAGAMENTO_ANTECIPADO,
@@ -177,7 +177,11 @@ def _painel_veiculos(motor: MotorLogistica, session_id: str) -> dict[str, dict[s
                 if not geocodificacao.coordenada_da_linha(linha, cache, base):
                     sem_local.append(it.id_carga or it.id_item or it.numero_pedido)
         sug = motor.sugestao_corredor(vid, nomes) if rota.alerta_elastico else {"texto": "", "ids": [], "destino": ""}
+        agenda = motor.agenda.get(vid)
+        if agenda and agenda.get("assinatura") != motor.assinatura_carga(vid):
+            agenda = None  # carga mudou depois: horários previstos não valem mais
         painel[vid] = {
+            "agenda": agenda,
             "nome": nomes.get(vid, rota.veiculo_nome),
             "ordem_otimizada": motor.ordem_otimizada(vid),
             "sem_localizacao": sem_local,
@@ -294,6 +298,7 @@ def _motor_from_roteirizacao(data: dict[str, Any]) -> MotorLogistica:
     motor.veiculos_nao_sairam = list(data.get("veiculos_nao_sairam", []))
     motor.equipe_por_veiculo = dict(data.get("equipe_por_veiculo", {}))
     motor.sequencia_otimizada = dict(data.get("sequencia_otimizada", {}))
+    motor.agenda = dict(data.get("agenda", {}))
     return motor
 
 
@@ -925,14 +930,11 @@ class _OtimizarBody(BaseModel):
     veiculo_id: str = ""
 
 
-@router.post("/{session_id}/otimizar-sequencia", response_model=MoverPedidoResponseSchema, tags=["mapa"])
-def otimizar_sequencia(session_id: str, body: _OtimizarBody) -> MoverPedidoResponseSchema:
-    """Melhor ordem de entrega (OR-Tools) — um caminhão ou todos os abertos."""
-    from dias_uteis import parse_data_br  # noqa: F401
-    from otimizacao import janela_recebimento, otimizar
+def _contexto_agenda(session_id: str) -> dict[str, Any]:
+    """Tudo o que a agenda de um caminhão precisa (carregado uma vez por chamada)."""
+    import horarios_clientes
 
     params = carregar_parametros()
-    deposito = geocodificacao.deposito(params)
     inicio = str(params.get("inicio_expediente", "07:00"))
     try:
         h, _, mnt = inicio.partition(":")
@@ -940,42 +942,163 @@ def otimizar_sequencia(session_id: str, body: _OtimizarBody) -> MoverPedidoRespo
     except ValueError:
         inicio_min = 7 * 60
     cache, base = _geo_contexto()
-    consolidados = {l.get("id_item"): l for l in _linhas_do_quadro(session_id)}
+    try:
+        consolidados = {l.get("id_item"): l for l in _linhas_do_quadro(session_id)}
+    except HTTPException:
+        consolidados = {}
+    return {
+        "params": params,
+        "deposito": geocodificacao.deposito(params),
+        "inicio_min": inicio_min,
+        "velocidade": float(params.get("velocidade_media_kmh", 50) or 50),
+        "velocidade_estrada": float(params.get("velocidade_estrada_kmh", 75) or 75),
+        "fator_afastar": 2.0 if params.get("entrega_de_fora_para_dentro", True) else 0.0,
+        "descarga": int(params.get("tempo_descarga_minutos", 20)),
+        "padrao": str(params.get("recebimento_padrao") or horarios_clientes.PADRAO),
+        "memoria": horarios_clientes.carregar(),
+        "cache": cache,
+        "base": base,
+        "consolidados": consolidados,
+    }
+
+
+def _paradas_do_caminhao(m: MotorLogistica, vid: str, ctx: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    from horarios_clientes import janela_da_parada
+
+    paradas: dict[str, dict[str, Any]] = {}
+    for it in m.itens_por_veiculo.get(vid, []):
+        chave = f"{it.cliente_codigo}|{it.cidade_destino}".upper()
+        if chave in paradas:
+            continue
+        linha = {**ctx["consolidados"].get(it.id_item, {}), **{k: v for k, v in asdict(it).items() if v}}
+        ponto = geocodificacao.coordenada_da_linha(linha, ctx["cache"], ctx["base"])
+        janela, origem = janela_da_parada(linha, ctx["memoria"], ctx["padrao"])
+        paradas[chave] = {
+            "id": chave,
+            "lat": ponto["lat"] if ponto else None,
+            "lon": ponto["lon"] if ponto else None,
+            "janela": janela,
+            "origem_janela": origem,
+        }
+    return paradas
+
+
+def _gravar_agenda(m: MotorLogistica, vid: str, agenda: dict[str, Any], paradas: dict[str, dict[str, Any]]) -> None:
+    from otimizacao import hhmm
+
+    m.agenda[vid] = {
+        "assinatura": m.assinatura_carga(vid),
+        "saida": hhmm(agenda["saida"]),
+        "volta": hhmm(agenda["volta"]),
+        "paradas": {
+            a["id"]: {
+                "chegada": hhmm(a["chegada"]) if a["chegada"] is not None else "",
+                "espera_min": a["espera"],
+                "atraso_min": a["atraso"],
+                "janela": f"{hhmm(a['janela'][0])}–{hhmm(a['janela'][1])}" if a.get("janela") else "",
+                "origem_janela": paradas.get(a["id"], {}).get("origem_janela", ""),
+            }
+            for a in agenda["paradas"]
+        },
+    }
+
+
+def _reagendar(m: MotorLogistica, vid: str, ctx: dict[str, Any]) -> None:
+    """Recalcula os horários previstos mantendo a ordem atual."""
+    from otimizacao import simular
+
+    paradas = _paradas_do_caminhao(m, vid, ctx)
+    if not paradas:
+        m.agenda.pop(vid, None)
+        return
+    agenda = simular(
+        list(paradas.values()), ctx["deposito"], ctx["inicio_min"], ctx["velocidade"], ctx["descarga"],
+        ctx["velocidade_estrada"],
+    )
+    _gravar_agenda(m, vid, agenda, paradas)
+
+
+@router.post("/{session_id}/otimizar-sequencia", response_model=MoverPedidoResponseSchema, tags=["mapa"])
+def otimizar_sequencia(session_id: str, body: _OtimizarBody) -> MoverPedidoResponseSchema:
+    """
+    Melhor ordem de entrega (OR-Tools) — um caminhão ou todos os abertos.
+    Objetivo: voltar mais cedo contando a espera até o cliente abrir (km desempata).
+    """
+    from otimizacao import otimizar
+
+    ctx = _contexto_agenda(session_id)
 
     def aplicar(m: MotorLogistica) -> tuple[bool, str]:
         nomes = _nomes_veiculos(m)
         alvo = [body.veiculo_id] if body.veiculo_id else [v for v in m.itens_por_veiculo if v not in m.veiculos_fechados]
         partes = []
         for vid in alvo:
-            itens = m.itens_por_veiculo.get(vid, [])
-            if len(itens) < 2:
+            if not m.itens_por_veiculo.get(vid):
                 continue
-            paradas: dict[str, dict[str, Any]] = {}
-            for it in itens:
-                chave = f"{it.cliente_codigo}|{it.cidade_destino}".upper()
-                if chave in paradas:
-                    continue
-                linha = {**consolidados.get(it.id_item, {}), **{k: v for k, v in asdict(it).items() if v}}
-                ponto = geocodificacao.coordenada_da_linha(linha, cache, base)
-                paradas[chave] = {
-                    "id": chave,
-                    "lat": ponto["lat"] if ponto else None,
-                    "lon": ponto["lon"] if ponto else None,
-                    "janela": janela_recebimento(linha.get("obs_recebimento", "")),
-                }
-            r = otimizar(list(paradas.values()), deposito, inicio_min,
-                         descarga_min=int(params.get("tempo_descarga_minutos", 20)))
+            paradas = _paradas_do_caminhao(m, vid, ctx)
+            r = otimizar(list(paradas.values()), ctx["deposito"], ctx["inicio_min"],
+                         velocidade_kmh=ctx["velocidade"], descarga_min=ctx["descarga"],
+                         velocidade_estrada_kmh=ctx["velocidade_estrada"], fator_afastar=ctx["fator_afastar"])
             m.aplicar_sequencia(vid, r["ordem"])
             m.recalcular_metricas(vid)
             m.sequencia_otimizada[vid] = m.assinatura_carga(vid)
-            sem_local = sum(1 for p in paradas.values() if p["lat"] is None)
-            texto = f"{nomes.get(vid, vid)}: {r['km_depois']:.0f} km"
-            if sem_local:
-                texto += f" ({sem_local} sem localização no fim)"
+            _gravar_agenda(m, vid, r["agenda"], paradas)
+            texto = f"{nomes.get(vid, vid)}: volta {m.agenda[vid]['volta']}, {r['km_depois']:.0f} km"
+            if r["aviso"]:
+                texto += f" ({r['aviso'].rstrip('.')})"
             partes.append(texto)
         if not partes:
-            return True, "Nada para otimizar (caminhões com menos de 2 paradas ou fechados)."
+            return True, "Nada para otimizar (caminhões vazios ou fechados)."
         return True, "Ordem de entrega otimizada — " + "; ".join(partes) + "."
+
+    return _operar_divisao(session_id, aplicar)
+
+
+class _OrdemBody(BaseModel):
+    # chaves das paradas (cliente|cidade) na ordem de entrega desejada
+    chaves: list[str]
+
+
+@router.post("/{session_id}/veiculos/{veiculo_id}/ordem", response_model=MoverPedidoResponseSchema)
+def definir_ordem(session_id: str, veiculo_id: str, body: _OrdemBody) -> MoverPedidoResponseSchema:
+    """O operador escolhe a ordem (Entregar primeiro / Subir / Descer). Vale como ordem definida."""
+    ctx = _contexto_agenda(session_id)
+
+    def aplicar(m: MotorLogistica) -> tuple[bool, str]:
+        if not m.itens_por_veiculo.get(veiculo_id):
+            return False, "Caminhão vazio."
+        m.aplicar_sequencia(veiculo_id, [c.upper() for c in body.chaves])
+        m.recalcular_metricas(veiculo_id)
+        m.sequencia_otimizada[veiculo_id] = m.assinatura_carga(veiculo_id)
+        _reagendar(m, veiculo_id, ctx)
+        return True, f"Ordem ajustada — volta prevista {m.agenda.get(veiculo_id, {}).get('volta', '')}."
+
+    return _operar_divisao(session_id, aplicar)
+
+
+class _HorarioClienteBody(BaseModel):
+    cliente_codigo: str
+    horario: str = ""  # "" apaga
+
+
+@router.post("/{session_id}/horario-cliente", response_model=MoverPedidoResponseSchema)
+def horario_cliente(session_id: str, body: _HorarioClienteBody) -> MoverPedidoResponseSchema:
+    """Guarda o horário de recebimento do cliente (vale daqui para frente, nos dois PCs)."""
+    import horarios_clientes
+
+    try:
+        horarios_clientes.salvar(body.cliente_codigo, body.horario)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    ctx = _contexto_agenda(session_id)
+    cod = normalizar_codigo_cliente(body.cliente_codigo)
+
+    def aplicar(m: MotorLogistica) -> tuple[bool, str]:
+        for vid, itens in m.itens_por_veiculo.items():
+            if any(normalizar_codigo_cliente(i.cliente_codigo) == cod for i in itens):
+                _reagendar(m, vid, ctx)
+        txt = f"Horário de recebimento salvo: {body.horario}." if body.horario.strip() else "Horário do cliente apagado (vale o padrão)."
+        return True, txt + " Use “Otimizar” para refazer a ordem com ele."
 
     return _operar_divisao(session_id, aplicar)
 

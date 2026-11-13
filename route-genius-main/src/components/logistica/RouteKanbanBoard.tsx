@@ -39,8 +39,11 @@ import { useEffect, useMemo, useState } from "react";
 
 import { PedidoAuditSheet } from "@/components/logistica/PedidoAuditSheet";
 import {
+  ItensAcoesParada,
+  LinhaAgenda,
   PedidoKanbanCard,
   getCardId,
+  type AcoesParada,
   type CardPedido,
 } from "@/components/logistica/PedidoKanbanCard";
 import { VehicleMetrics } from "@/components/logistica/VehicleMetrics";
@@ -72,6 +75,7 @@ import {
   idRetornoVeiculo,
   type EquipeVeiculo,
   type OperacaoDivisao,
+  type AgendaParada,
   type PainelVeiculo,
   type Roteirizacao,
   type PedidoConsolidado,
@@ -208,6 +212,8 @@ export function RouteKanbanBoard({
   onVerMapa,
   busca = "",
   compacto = false,
+  onOrdem,
+  onHorarioCliente,
 }: {
   data: Roteirizacao;
   loading: boolean;
@@ -243,7 +249,18 @@ export function RouteKanbanBoard({
   busca?: string;
   /** Mapa ao lado: colunas mais estreitas */
   compacto?: boolean;
+  /** Ordem de entrega escolhida à mão (chaves cliente|cidade) */
+  onOrdem?: (veiculoId: string, chaves: string[]) => Promise<void>;
+  onHorarioCliente?: (clienteCodigo: string, horario: string) => Promise<void>;
 }) {
+  const [horarioModal, setHorarioModal] = useState<{
+    codigo: string;
+    nome: string;
+    atual: string;
+    origem: string;
+  } | null>(null);
+  const [horarioTexto, setHorarioTexto] = useState("");
+  const [horarioErro, setHorarioErro] = useState("");
   const [activeCard, setActiveCard] = useState<CardPedido | null>(null);
   const [arrastando, setArrastando] = useState<{ ids: string[]; peso: number } | null>(null);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
@@ -943,6 +960,16 @@ export function RouteKanbanBoard({
                     selecionados={selecionados}
                     destaqueDe={destaqueDe}
                     compacto={compacto}
+                    onOrdem={onOrdem ? (chaves: string[]) => onOrdem(vid, chaves) : undefined}
+                    onAbrirHorario={
+                      onHorarioCliente
+                        ? (codigo: string, nome: string, atual: string, origem: string) => {
+                            setHorarioModal({ codigo, nome, atual, origem });
+                            setHorarioTexto(origem === "cliente" ? atual.replace("–", " às ") : "");
+                            setHorarioErro("");
+                          }
+                        : undefined
+                    }
                   >
                     {data.viagens_retorno_habilitadas?.includes(vid) && (
                       <SegundaViagem
@@ -1301,6 +1328,79 @@ export function RouteKanbanBoard({
               onClick={() => void confirmarAntecipacao()}
             >
               {antecipando ? "Confirmando…" : "Confirmar antecipação"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!horarioModal} onOpenChange={(o) => !o && setHorarioModal(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Horário de recebimento — {horarioModal?.nome}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Vale daqui para frente para este cliente (nos dois PCs). O horário escrito na observação
+            do pedido continua valendo primeiro.
+            {horarioModal?.atual && (
+              <>
+                {" "}
+                Hoje está: <b className="text-foreground">{horarioModal.atual}</b> (
+                {horarioModal.origem === "observacao"
+                  ? "da observação"
+                  : horarioModal.origem === "cliente"
+                    ? "salvo no cliente"
+                    : "padrão"}
+                ).
+              </>
+            )}
+          </p>
+          <input
+            autoFocus
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            placeholder="Ex.: 08:00 às 17:00"
+            value={horarioTexto}
+            onChange={(e) => {
+              setHorarioTexto(e.target.value);
+              setHorarioErro("");
+            }}
+          />
+          {horarioErro && <p className="text-sm text-destructive">{horarioErro}</p>}
+          <DialogFooter>
+            {horarioModal?.origem === "cliente" && (
+              <button
+                type="button"
+                className="mr-auto px-4 py-2 text-sm rounded-md border text-destructive"
+                onClick={async () => {
+                  if (!horarioModal || !onHorarioCliente) return;
+                  await onHorarioCliente(horarioModal.codigo, "");
+                  setHorarioModal(null);
+                }}
+              >
+                Apagar (usar o padrão)
+              </button>
+            )}
+            <button
+              type="button"
+              className="px-4 py-2 text-sm rounded-md border"
+              onClick={() => setHorarioModal(null)}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={!horarioTexto.trim()}
+              className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground disabled:opacity-50"
+              onClick={async () => {
+                if (!horarioModal || !onHorarioCliente) return;
+                try {
+                  await onHorarioCliente(horarioModal.codigo, horarioTexto.trim());
+                  setHorarioModal(null);
+                } catch (e) {
+                  setHorarioErro(e instanceof Error ? e.message : "Não foi possível salvar.");
+                }
+              }}
+            >
+              Salvar
             </button>
           </DialogFooter>
         </DialogContent>
@@ -1990,8 +2090,12 @@ function ColunaCaminhao({
   destaqueDe,
   children,
   compacto,
+  onOrdem,
+  onAbrirHorario,
 }: {
   compacto?: boolean;
+  onOrdem?: (chaves: string[]) => Promise<void>;
+  onAbrirHorario?: (codigo: string, nome: string, atual: string, origem: string) => void;
   rota: Roteirizacao["rotas"][0];
   cor: string;
   atalho: number;
@@ -2032,6 +2136,35 @@ function ColunaCaminhao({
   const nome = painel?.nome ?? rota.veiculo_nome;
   const pendentes = check.itens.filter((i) => !i.ok);
   const peso = Number(rota.peso_alocado_kg ?? 0);
+  const agenda = painel?.agenda ?? null;
+  const ordem = lista.map((p) => p.chave);
+  const acoesDe = (p: Parada): AcoesParada => {
+    const i = ordem.indexOf(p.chave);
+    const trocar = (j: number) => {
+      const nova = [...ordem];
+      [nova[i], nova[j]] = [nova[j], nova[i]];
+      return nova;
+    };
+    const primeira = p.linhas[0] as Record<string, unknown>;
+    return {
+      primeiro:
+        onOrdem && i > 0
+          ? () => void onOrdem([p.chave, ...ordem.filter((c) => c !== p.chave)])
+          : undefined,
+      subir: onOrdem && i > 0 ? () => void onOrdem(trocar(i - 1)) : undefined,
+      descer: onOrdem && i < ordem.length - 1 ? () => void onOrdem(trocar(i + 1)) : undefined,
+      horario:
+        onAbrirHorario && primeira.cliente_codigo
+          ? () =>
+              onAbrirHorario(
+                String(primeira.cliente_codigo),
+                p.apelido || p.cliente,
+                agenda?.paradas[p.chave]?.janela ?? "",
+                agenda?.paradas[p.chave]?.origem_janela ?? "",
+              )
+          : undefined,
+    };
+  };
 
   const otimizar = async () => {
     if (!onOtimizar) return;
@@ -2180,7 +2313,15 @@ function ColunaCaminhao({
           {lista.length === 1 ? "cliente" : "clientes"} ·{" "}
           <b className="text-foreground">{itens.length}</b>{" "}
           {itens.length === 1 ? "linha" : "linhas"} · <b className="text-foreground">{kg(peso)}</b>
-          {rota.retorno_previsto && <> · volta {rota.retorno_previsto}</>}
+          {agenda ? (
+            <>
+              {" "}
+              · sai <b className="text-foreground">{agenda.saida}</b> · volta{" "}
+              <b className="text-foreground">{agenda.volta}</b>
+            </>
+          ) : (
+            rota.retorno_previsto && <> · volta {rota.retorno_previsto}</>
+          )}
           {rota.regiao_predominante && <> · {rota.regiao_predominante}</>}
         </div>
         <div className="-mx-3 mt-1">
@@ -2272,6 +2413,8 @@ function ColunaCaminhao({
               parada={p.numero}
               cor={cor}
               semLocal={semLocal.has(p.ids[0])}
+              agendaParada={agenda?.paradas[p.chave]}
+              acoesParada={acoesDe(p)}
               onMoveTo={(dest) => onMoveTo(dest, p.linhas[0])}
               onOpenAudit={onOpenAudit}
               onDivisao={divisaoDoCard(onDivisao, p.linhas[0])}
@@ -2285,6 +2428,8 @@ function ColunaCaminhao({
               cor={cor}
               destinos={destinos}
               semLocal={p.ids.some((id) => semLocal.has(id))}
+              agendaParada={agenda?.paradas[p.chave]}
+              acoesParada={acoesDe(p)}
               onMoveTo={onMoveTo}
               onOpenAudit={onOpenAudit}
               onDivisao={onDivisao}
@@ -2330,7 +2475,11 @@ function ParadaGrupo({
   alternarSelecao,
   selecionados,
   destaqueDe,
+  agendaParada,
+  acoesParada,
 }: {
+  agendaParada?: AgendaParada;
+  acoesParada?: AcoesParada;
   parada: Parada;
   columnId: string;
   cor: string;
@@ -2415,6 +2564,7 @@ function ParadaGrupo({
             </div>
           </div>
           <div className="mt-0.5 truncate text-xs text-muted-foreground">{parada.local}</div>
+          <LinhaAgenda a={agendaParada} />
           {semLocal && (
             <div className="mt-1 inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
               <MapPinOff className="h-3 w-3" /> Sem localização no mapa
@@ -2443,6 +2593,32 @@ function ParadaGrupo({
             <span className="font-mono text-sm font-bold">{kg(parada.peso)}</span>
           </div>
         </button>
+        {acoesParada && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="shrink-0 rounded p-1 hover:bg-muted"
+                aria-label="Ações da parada"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <ItensAcoesParada acoes={acoesParada} />
+              {destinos
+                .filter((d) => d.id !== columnId)
+                .map((d) => (
+                  <DropdownMenuItem
+                    key={d.id}
+                    onClick={() => parada.linhas.forEach((l) => onMoveTo(d.id, l))}
+                  >
+                    Mover cliente para {d.label}
+                  </DropdownMenuItem>
+                ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
       {mostrarLinhas && (
         <div className="space-y-1 border-t bg-muted/20 p-1.5">

@@ -283,7 +283,24 @@ export interface Roteirizacao {
   desfazer_disponivel?: number;
 }
 
+export interface AgendaParada {
+  chegada: string;
+  espera_min: number;
+  atraso_min: number;
+  janela: string;
+  /** observacao | cliente | padrao */
+  origem_janela: string;
+}
+
+export interface AgendaVeiculo {
+  saida: string;
+  volta: string;
+  paradas: Record<string, AgendaParada>;
+}
+
 export interface PainelVeiculo {
+  /** Horários previstos (só quando valem para a carga atual) */
+  agenda?: AgendaVeiculo | null;
   nome: string;
   ordem_otimizada: boolean;
   /** id_carga das cargas sem localização no mapa */
@@ -478,6 +495,12 @@ export interface ConfiguracaoOperacional {
     tempo_almoco_minutos: number;
     jornada_maxima_minutos: number;
     velocidade_media_kmh: number;
+    /** Fábrica -> 1ª parada e volta (de madrugada) */
+    velocidade_estrada_kmh?: number;
+    /** Cliente sem horário na observação nem salvo recebe neste horário */
+    recebimento_padrao?: string;
+    /** Começa pela parada mais longe da fábrica e vai voltando */
+    entrega_de_fora_para_dentro?: boolean;
     turnos: Array<{ nome: string; saida: string; fim: string }>;
   };
   operacao: {
