@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 import time
@@ -95,6 +96,8 @@ def situacao(raiz: Path, rodando: str) -> dict:
     github = commit_github(raiz)
     return {
         "rodando": rodando,
+        # ligado pelo vigia (ligar_sozinho.bat): ele mesmo atualiza e reinicia
+        "vigia": bool(os.environ.get("LOGISTICA_VIGIA")),
         "no_disco": no_disco,
         "github": github,
         # código da pasta mudou depois que o servidor subiu

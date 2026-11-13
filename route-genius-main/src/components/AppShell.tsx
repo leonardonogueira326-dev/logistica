@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getStoredSessionId, setStoredSessionId } from "@/hooks/useLogisticaSession";
 import { Link, useRouterState } from "@tanstack/react-router";
 import type { ReactNode } from "react";
@@ -180,6 +180,8 @@ type Versao = {
   no_disco: string;
   github: string;
   desatualizado: boolean;
+  /** Ligado pelo vigia: atualiza e reinicia sozinho */
+  vigia?: boolean;
   atras_do_github: boolean;
   atualizacao: { estado: string; quando: string; mensagem: string };
 };
@@ -232,6 +234,13 @@ function SeloVersao() {
 /** Faixa de aviso quando o código deste PC ficou para trás. */
 function AvisoVersao() {
   const { data } = useVersao();
+  // O servidor reiniciou com outra versão (atualização automática): recarrega a tela sozinho
+  const primeira = useRef("");
+  useEffect(() => {
+    if (!data?.rodando) return;
+    if (!primeira.current) primeira.current = data.rodando;
+    else if (primeira.current !== data.rodando) window.location.reload();
+  }, [data?.rodando]);
   if (!data) return null;
   const erro = data.atualizacao?.estado === "ERRO";
   if (!erro && !data.desatualizado && !data.atras_do_github) return null;
@@ -242,6 +251,11 @@ function AvisoVersao() {
           <b>Não consegui atualizar o código deste PC</b> ({data.atualizacao.quando}) — você está
           usando uma versão antiga. Feche a janela preta e abra o <b>iniciar.bat</b> de novo; se
           continuar, chame o Claude (detalhes em logs\codigo.log).
+        </>
+      ) : data.vigia ? (
+        <>
+          <b>Tem uma versão nova do sistema.</b> Ele vai se atualizar sozinho em instantes, assim
+          que você parar de mexer por uns minutos — a tela recarrega sozinha.
         </>
       ) : (
         <>
