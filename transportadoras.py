@@ -22,7 +22,9 @@ from typing import Any
 from normalizador import normalizar_codigo_cliente, normalizar_texto, resolver_rota_logistica
 
 RAIZ = Path(__file__).resolve().parent
-NOMES_BASE = ("base-transportadoras.xlsx",)
+# 1º a base com endereço (cadastro completo do sistema da empresa); a exportação
+# "Dados" completa o que faltar (ex.: transportadoras cadastradas depois).
+NOMES_BASE = ("base-transportadoras-enderecos.xlsx", "base-transportadoras.xlsx")
 
 # cabeçalho (sem acento, maiúsculo) -> campo
 _COLUNAS = {
@@ -35,9 +37,13 @@ _COLUNAS = {
     "BAIRRO": "bairro",
     "CIDADE": "cidade", "MUNICIPIO": "cidade",
     "UF": "uf", "ESTADO": "uf",
-    "CEP": "cep",
+    "CEP": "cep", "C_E_P": "cep",
+    "U_F": "uf",
+    "STATUS": "status",
     "HORARIO_RECEBIMENTO": "horario", "HORARIO": "horario", "HORARIO_DE_RECEBIMENTO": "horario",
-    "OBS": "obs", "OBSERVACAO": "obs", "OBSERVACOES": "obs",
+    # "Observações" do cadastro da empresa é histórico de atualização (não serve
+    # para a entrega): só uma coluna OBS / OBS_ENTREGA própria vira observação.
+    "OBS": "obs", "OBS_ENTREGA": "obs",
 }
 _RUA = re.compile(r"^(R\.?|RUA|AV\.?|AVENIDA|ROD\.?|RODOVIA|ESTR\.?|ESTRADA|AL\.?|ALAMEDA|TRAV\.?|PCA|PRACA|VIA|KM)\b")
 _CEP = re.compile(r"\b(\d{5})-?(\d{3})\b")
@@ -69,16 +75,7 @@ def _texto(valor: Any) -> str:
     return " ".join(str(valor).split())
 
 
-def carregar(pasta: Path | str | None = None) -> dict[str, dict[str, str]]:
-    """codigo (sem zeros à esquerda) -> dados da transportadora."""
-    raiz = Path(pasta) if pasta else RAIZ
-    candidatos = [raiz / n for n in NOMES_BASE if (raiz / n).is_file()]
-    if not candidatos:
-        return {}
-    caminho = candidatos[0]
-    marca = (str(caminho), caminho.stat().st_mtime)
-    if _cache.get("marca") == marca:
-        return _cache["dados"]
+def _ler(caminho: Path) -> dict[str, dict[str, str]]:
     import openpyxl
 
     dados: dict[str, dict[str, str]] = {}
@@ -98,9 +95,30 @@ def carregar(pasta: Path | str | None = None) -> dict[str, dict[str, str]]:
             codigo = normalizar_codigo_cliente(reg.get("codigo", ""))
             if codigo:
                 reg["codigo"] = codigo
+                if reg.get("cep", "").replace("-", "").strip("0") == "":
+                    reg["cep"] = ""  # 00000-000 = sem CEP
                 dados[codigo] = reg
     finally:
         wb.close()
+    return dados
+
+
+def carregar(pasta: Path | str | None = None) -> dict[str, dict[str, str]]:
+    """codigo (sem zeros à esquerda) -> dados da transportadora (bases juntas)."""
+    raiz = Path(pasta) if pasta else RAIZ
+    candidatos = [raiz / n for n in NOMES_BASE if (raiz / n).is_file()]
+    if not candidatos:
+        return {}
+    marca = tuple((str(c), c.stat().st_mtime) for c in candidatos)
+    if _cache.get("marca") == marca:
+        return _cache["dados"]
+    dados: dict[str, dict[str, str]] = {}
+    for caminho in candidatos:
+        for codigo, reg in _ler(caminho).items():
+            atual = dados.setdefault(codigo, {})
+            for campo, valor in reg.items():
+                if valor and not atual.get(campo):
+                    atual[campo] = valor
     _cache.update(marca=marca, dados=dados)
     return dados
 

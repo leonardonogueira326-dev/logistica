@@ -107,3 +107,27 @@ def test_trocar_para_levar_na_transportadora_e_voltar(quadro):
     c = client.patch(url, json={"status": "LIBERADO"}).json()
     assert c["cidade_destino"] == "SAO PAULO" and c["bairro_destino"] == "VL DOM PEDRO I" and not c["entrega_em"]
     assert c["obs_recebimento"] == "SÓ ABRE AS 8:00"
+
+
+def test_base_com_endereco_do_sistema_da_empresa(tmp_path):
+    """Cadastro completo (C.E.P., U.F., Observações de histórico) + exportação Dados completando."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Planilha1"
+    ws.append(("Código", "Razão Social", "Nome Fantasia", "Endereço", "Complemento", "Bairro", "Cidade", "C.E.P.",
+               "U.F.", "Telefone", "CNPJ", "Observações", "Status"))
+    ws.append((1073, "TRANSPORTADORA RODOVIASUL LTDA", "RODOVIASUL", "RUA SOLDADO JOSE REYMAO, 105", "", "PQ NOVO MUNDO",
+               "SAO PAULO", "02178-040", "SP", "(11)2412-7843", "x", "12.11.25 OK ATUALIZADA KARINA", "A"))
+    ws.append((1110, "TRANSPORTADORA A DEFINIR", "TRANSPORTADORA A DEFINIR", "", "", "", "", "00000-000", "", "", "",
+               None, "A"))
+    wb.save(tmp_path / "base-transportadoras-enderecos.xlsx")
+    _base(tmp_path, [(1212, "GERARD", None, None, None, None, None, None, None)])  # cadastrada depois
+    tr._cache.clear()
+    base = tr.carregar(tmp_path)
+    r = base["1073"]
+    assert (r["cidade"], r["cep"], r["uf"], r["bairro"]) == ("SAO PAULO", "02178-040", "SP", "PQ NOVO MUNDO")
+    assert not r.get("obs")  # histórico do cadastro não vai para a entrega
+    assert base["1110"].get("cep", "") == "" and "1212" in base
+    info = tr.endereco_transportadora("01073", "RODOVIASUL -", base)
+    assert info["origem"] == "base" and "PQ NOVO MUNDO" in tr.rotulo(info)
+    tr._cache.clear()
