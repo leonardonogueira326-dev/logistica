@@ -7,8 +7,10 @@ rem  Chamado pelo iniciar.bat, pelo sincronizar.bat e pelo botao
 rem  "Sincronizar agora" do sistema.
 rem  - Erros do git: logs\sincronizacao.log
 rem  - Resultado (a tela mostra): logs\sincronizacao_status.txt
-rem  - Conflito (mesmo arquivo mexido nos dois PCs): fica a versao deste PC;
-rem    a da nuvem vai para logs\conflitos\
+rem  - Conflito (mesmo arquivo mexido nos dois PCs):
+rem    aprendizado (data\*.json) e juntado item por item (scripts\juntar_json.py);
+rem    no resto (quadros do dia) fica a versao deste PC e a da nuvem vai
+rem    para logs\conflitos\
 rem ============================================================
 cd /d "%~dp0.."
 where git >nul 2>&1 || exit /b 0
@@ -50,6 +52,7 @@ for /f "delims=" %%f in ('%GF% diff --name-only') do (
 )
 
 set "CONFLITO="
+set "JUNTOU="
 rem Internet oscilando: tenta ate 3 vezes antes de dar erro
 set /a TENTATIVA=0
 :baixar
@@ -101,6 +104,8 @@ if errorlevel 1 (
 )
 if defined CONFLITO (
   > "%STATUS%" echo CONFLITO^|%AGORA%^|Os dois PCs mexeram no mesmo arquivo: ficou a versao deste PC; a outra esta em logs\conflitos.
+) else if defined JUNTOU (
+  > "%STATUS%" echo OK^|%AGORA%^|Dados enviados e recebidos. Juntei o que os dois PCs aprenderam.
 ) else (
   > "%STATUS%" echo OK^|%AGORA%^|Dados enviados e recebidos.
 )
@@ -109,9 +114,23 @@ exit /b 0
 
 rem ---------- conflito num arquivo: guarda a versao da nuvem e fica a deste PC
 :manter_deste_pc
-set "CONFLITO=1"
 set "ARQ=%~1"
 set "ARQ=%ARQ:/=_%"
+rem Aprendizado (data\*.json): junta item por item o que os dois PCs ensinaram
+if not exist .venv\Scripts\python.exe goto sem_juntar
+if not exist scripts\juntar_json.py goto sem_juntar
+%G% show ":1:%~1" > "logs\conflitos\_base.tmp" 2>nul
+%G% show ":2:%~1" > "logs\conflitos\_nuvem.tmp" 2>nul
+%G% show ":3:%~1" > "logs\conflitos\_pc.tmp" 2>nul
+.venv\Scripts\python.exe scripts\juntar_json.py "%~1" "logs\conflitos\_base.tmp" "logs\conflitos\_nuvem.tmp" "logs\conflitos\_pc.tmp" >> "%SLOG%" 2>&1
+if errorlevel 1 goto sem_juntar
+%G% add -f -- "%~1" >> "%SLOG%" 2>&1
+if errorlevel 1 goto sem_juntar
+echo juntei o aprendizado dos dois PCs em %~1 >> "%SLOG%"
+set "JUNTOU=1"
+exit /b 0
+:sem_juntar
+set "CONFLITO=1"
 echo conflito em %~1 - fica a versao deste PC; a da nuvem: logs\conflitos\%ARQ%.nuvem-%VOLTAS% >> "%SLOG%"
 %G% show ":2:%~1" > "logs\conflitos\%ARQ%.nuvem-%VOLTAS%" 2>> "%SLOG%"
 %G% checkout --theirs -- "%~1" >> "%SLOG%" 2>&1 || %G% rm -q -- "%~1" >> "%SLOG%" 2>&1
