@@ -29,3 +29,10 @@ def test_telas_so_sao_refeitas_quando_o_codigo_muda(tmp_path, monkeypatch):
     assert not vigia.telas_prontas("abc")
     (client.parent / ".commit").write_text("abc\n")
     assert vigia.telas_prontas("abc") and not vigia.telas_prontas("def")
+
+
+def test_so_gravacao_do_sistema_dispara_o_envio():
+    agora = datetime.now().isoformat(timespec="seconds")
+    assert vigia.ultima_gravacao({"banco": {"ultima_alteracao": {"quando": agora, "origem": "sistema"}}})
+    assert vigia.ultima_gravacao({"banco": {"ultima_alteracao": {"quando": agora, "origem": "sincronizacao"}}}) is None
+    assert vigia.ultima_gravacao(None) is None and vigia.ultima_gravacao({"banco": {"ultima_alteracao": None}}) is None

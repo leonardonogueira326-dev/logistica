@@ -7,7 +7,8 @@ Chamado pelo ligar_sozinho.bat (que o Windows abre ao entrar no usuário):
 - se o servidor cair, liga de novo;
 - a cada 10 min confere o GitHub: tendo versão nova e ninguém gravando há
   3 min, desliga, atualiza e liga (a tela recarrega sozinha);
-- a cada 30 min sincroniza os dados com o outro PC.
+- sincroniza os dados 2 min depois de cada mudança e, de qualquer forma,
+  a cada 30 min.
 
 Sai com 75 quando o próprio vigia foi atualizado (o .bat abre de novo) e com
 0 quando já existe outro vigia rodando. Registro em logs/vigia.log.
@@ -33,6 +34,7 @@ URL = f"http://127.0.0.1:{PORTA}"
 CONFERIR_VERSAO_S = 600
 SINCRONIZAR_S = 1800
 OCIOSO_S = 180
+ENVIAR_APOS_S = int(os.environ.get("LOGISTICA_ENVIAR_APOS_S", "120"))
 SAIR_REABRIR = 75
 WINDOWS = os.name == "nt"
 
@@ -102,6 +104,17 @@ def ocioso(s: dict | None, agora: datetime | None = None) -> bool:
     except ValueError:
         return True
     return parado >= OCIOSO_S
+
+
+def ultima_gravacao(s: dict | None) -> datetime | None:
+    """Quando o sistema gravou algo pela última vez (o que chegou do outro PC não conta)."""
+    alt = ((s or {}).get("banco") or {}).get("ultima_alteracao") or {}
+    if alt.get("origem") != "sistema":
+        return None
+    try:
+        return datetime.fromisoformat(alt.get("quando", ""))
+    except ValueError:
+        return None
 
 
 def telas_prontas(commit: str) -> bool:
@@ -202,6 +215,8 @@ def main() -> int:
     log(f"servidor ligado (versão {commit[:7]})")
     quedas = 0
     ultima_versao = ultima_sinc = ligado_em = time.time()
+    ultima_olhada = 0.0
+    sinc_ate = datetime.now()  # tudo gravado até aqui já foi sincronizado
     pendente = ""
 
     while True:
@@ -219,8 +234,17 @@ def main() -> int:
             ligado_em = time.time()
             continue
 
+        # Sincroniza: 2 min depois da última gravação (para o outro PC já receber)
+        # e, de qualquer forma, a cada 30 min (para receber o que veio de lá).
+        if agora - ultima_olhada >= 30:
+            ultima_olhada = agora
+            gravou = ultima_gravacao(saude())
+            if gravou and gravou > sinc_ate and (datetime.now() - gravou).total_seconds() >= ENVIAR_APOS_S:
+                sinc_ate = datetime.now()
+                ultima_sinc = 0.0
         if agora - ultima_sinc >= SINCRONIZAR_S:
             ultima_sinc = agora
+            sinc_ate = datetime.now()
             try:
                 req = urllib.request.Request(f"{URL}/api/sincronizacao", method="POST", data=b"")
                 urllib.request.urlopen(req, timeout=10).close()
