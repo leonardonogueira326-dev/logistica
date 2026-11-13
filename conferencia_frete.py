@@ -15,6 +15,7 @@ Conferir um VERMELHO grava cliente+transportadora: da próxima vez vem VERDE.
 from __future__ import annotations
 
 import json
+import armazenamento
 import re
 from datetime import datetime
 from pathlib import Path
@@ -41,7 +42,7 @@ def _chave(c: Any) -> str:
 
 def carregar_memoria(caminho: Path = ARQUIVO) -> dict[str, dict[str, str]]:
     try:
-        return json.loads(caminho.read_text(encoding="utf-8"))
+        return armazenamento.ler(caminho)
     except Exception:
         return {}
 
@@ -57,7 +58,7 @@ def lembrar(linhas: list[Any], caminho: Path = ARQUIVO) -> int:
             novos += 1
     if novos:
         caminho.parent.mkdir(parents=True, exist_ok=True)
-        caminho.write_text(json.dumps(memoria, ensure_ascii=False, indent=2), encoding="utf-8")
+        armazenamento.gravar(caminho, memoria)
     return novos
 
 

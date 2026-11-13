@@ -9,6 +9,7 @@ e pode ser diferente do destino de entrega do PDF.
 from __future__ import annotations
 
 import json
+import armazenamento
 import re
 from pathlib import Path
 
@@ -91,7 +92,7 @@ def limpar_representante_pdf(texto: str) -> str:
 def carregar_aprendidos() -> dict[str, str]:
     """Correções feitas pelo operador: codigo_cliente -> representante."""
     try:
-        bruto = json.loads(ARQUIVO_APRENDIDOS.read_text(encoding="utf-8"))
+        bruto = armazenamento.ler(ARQUIVO_APRENDIDOS)
         return {k: v for k, v in bruto.items() if not k.startswith("_") and isinstance(v, str)}
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
@@ -112,5 +113,5 @@ def aprender_representante(codigo_cliente: str, representante: str) -> bool:
     dados[codigo] = nome
     ARQUIVO_APRENDIDOS.parent.mkdir(parents=True, exist_ok=True)
     payload = {"_descricao": "Representante corrigido pelo operador (codigo_cliente -> nome)", **dict(sorted(dados.items()))}
-    ARQUIVO_APRENDIDOS.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    armazenamento.gravar(ARQUIVO_APRENDIDOS, payload)
     return True

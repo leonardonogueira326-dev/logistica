@@ -1,4 +1,8 @@
-"""Persistência de sessões diárias (UUID) em data/sessions/{id}/."""
+"""
+Quadros do dia (sessões): documentos gravados pelo armazenamento (banco local,
+espelhados em data/sessions/{id}/ para a sincronização entre os PCs).
+PDFs enviados ficam na pasta uploads/ da sessão.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import armazenamento
 import config
 from normalizador import mesma_linha
 
@@ -103,8 +108,8 @@ class SessionStore:
             if not pasta.is_dir() or not ingest.exists():
                 continue
             try:
-                meta = json.loads((pasta / "meta.json").read_text(encoding="utf-8"))
-                dados = json.loads(ingest.read_text(encoding="utf-8"))
+                meta = armazenamento.ler(pasta / "meta.json")
+                dados = armazenamento.ler(ingest)
             except (OSError, json.JSONDecodeError):
                 continue
             consolidados = dados.get("consolidados", [])
@@ -135,11 +140,8 @@ class SessionStore:
 
     def load_ingestao(self, session_id: str) -> Optional[dict[str, Any]]:
         path = self._session_dir(session_id) / "ingestao.json"
-        if not path.exists():
-            return None
         with _lock_for(session_id):
-            with open(path, encoding="utf-8") as f:
-                return json.load(f)
+            return self._ler_se_existe(path)
 
     def update_consolidado(
         self,
@@ -181,10 +183,7 @@ class SessionStore:
 
     def load_consolidados_validados(self, session_id: str) -> Optional[dict[str, Any]]:
         path = self._session_dir(session_id) / "consolidados_validados.json"
-        if not path.exists():
-            return None
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
+        return self._ler_se_existe(path)
 
     # ------------------------------------------------------------ desfazer
     # Cada mudança no quadro guarda a versão anterior (só neste PC: fica fora
@@ -197,16 +196,14 @@ class SessionStore:
         return raiz / ".desfazer" / f"{session_id}.json"
 
     def _pilha_desfazer(self, session_id: str) -> list[dict[str, Any]]:
-        try:
-            dados = json.loads(self._arquivo_desfazer(session_id).read_text(encoding="utf-8"))
-            return dados if isinstance(dados, list) else []
-        except (FileNotFoundError, json.JSONDecodeError):
-            return []
+        dados = armazenamento.ler_ou(self._arquivo_desfazer(session_id), [])
+        return dados if isinstance(dados, list) else []
 
     def _gravar_pilha(self, session_id: str, pilha: list[dict[str, Any]]) -> None:
-        arq = self._arquivo_desfazer(session_id)
-        arq.parent.mkdir(parents=True, exist_ok=True)
-        arq.write_text(json.dumps(pilha[-self.LIMITE_DESFAZER:], ensure_ascii=False), encoding="utf-8")
+        # só no banco deste PC (não vai para o outro PC)
+        armazenamento.gravar(
+            self._arquivo_desfazer(session_id), pilha[-self.LIMITE_DESFAZER:], indent=None, so_banco=True
+        )
 
     def qtd_desfazer(self, session_id: str) -> int:
         return len(self._pilha_desfazer(session_id))
@@ -231,22 +228,25 @@ class SessionStore:
 
     def load_roteirizacao(self, session_id: str) -> Optional[dict[str, Any]]:
         path = self._session_dir(session_id) / "roteirizacao.json"
-        if not path.exists():
+        return self._ler_se_existe(path)
+
+    @staticmethod
+    def _ler_se_existe(path: Path) -> Optional[dict[str, Any]]:
+        try:
+            return armazenamento.ler(path)
+        except FileNotFoundError:
             return None
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
 
     def _read_json(self, session_id: str, name: str) -> dict[str, Any]:
         path = self.session_path(session_id) / name
-        if not path.exists():
-            raise SessionNotFoundError(f"Arquivo {name} ausente na sessão {session_id}")
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            return armazenamento.ler(path)
+        except FileNotFoundError:
+            raise SessionNotFoundError(f"Arquivo {name} ausente na sessão {session_id}") from None
 
     def _write_json(self, session_id: str, name: str, data: dict[str, Any]) -> None:
         path = self.session_path(session_id) / name
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        armazenamento.gravar(path, data)
 
 
 store = SessionStore()

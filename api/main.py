@@ -72,6 +72,47 @@ def versao() -> dict:
     return _versao_codigo.situacao(PROJECT_ROOT, _COMMIT_RODANDO)
 
 
+@app.get("/api/saude", tags=["health"])
+def saude() -> dict:
+    """Página de saúde (para o hub / monitoramento): versão, banco local, backup e sincronização."""
+    import armazenamento
+    from api.routers.sincronizacao import ler_status
+
+    try:
+        banco = armazenamento.status()
+    except Exception as exc:  # noqa: BLE001
+        banco = {"ligado": True, "erro": str(exc)}
+    versao_atual = _versao_codigo.situacao(PROJECT_ROOT, _COMMIT_RODANDO)
+    problemas = []
+    if banco.get("erro") or banco.get("integridade", "ok") != "ok":
+        problemas.append("banco de dados")
+    if banco.get("espelhos_pendentes"):
+        problemas.append("arquivos de sincronização pendentes")
+    if versao_atual.get("atras_do_github") or versao_atual.get("desatualizado"):
+        problemas.append("versão antiga")
+    sinc = ler_status(PROJECT_ROOT)
+    if sinc.get("estado") == "ERRO":
+        problemas.append("sincronização")
+    return {"ok": not problemas, "problemas": problemas, "versao": versao_atual, "banco": banco, "sincronizacao": sinc}
+
+
+@app.on_event("startup")
+def _preparar_banco() -> None:
+    """Ao ligar: traz os arquivos para o banco local e garante o backup do dia (em segundo plano)."""
+    import threading
+
+    import armazenamento
+
+    def tarefa() -> None:
+        try:
+            armazenamento.importar_tudo()
+            armazenamento._backup_se_virou_o_dia()
+        except Exception:  # noqa: BLE001 — nunca impede o sistema de abrir
+            pass
+
+    threading.Thread(target=tarefa, daemon=True).start()
+
+
 @app.get("/api/health", response_model=HealthSchema, tags=["health"])
 def health() -> HealthSchema:
     return HealthSchema()
