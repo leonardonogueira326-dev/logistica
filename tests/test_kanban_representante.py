@@ -1,10 +1,12 @@
 """Kanban: soltar card parado num caminhão (consulta ao representante / travas)."""
 from __future__ import annotations
 
+from tests.conftest import trocar_no_quadro  # noqa: E402
+
 import pytest
 from fastapi import HTTPException
 
-import api.routers.sessions as rotas
+import api.routers.quadro_montagem as montagem
 from api.schemas import MoverPedidoSchema
 from models import PedidoConsolidado
 from motor_logistica import MotorLogistica
@@ -42,10 +44,9 @@ def ambiente(monkeypatch):
         def save_roteirizacao(self, sid, data):
             estado["rote"] = data
 
-    monkeypatch.setattr(rotas, "store", FakeStore())
-    monkeypatch.setattr(rotas, "_get_active_consolidados", lambda sid: ({}, [estado["linha"]], True))
-    monkeypatch.setattr(
-        rotas, "_patch_consolidado_session", lambda sid, i, p: estado["patches"].append((i, p)) or True
+    trocar_no_quadro(monkeypatch, "store", FakeStore())
+    trocar_no_quadro(monkeypatch, "_get_active_consolidados", lambda sid: ({}, [estado["linha"]], True))
+    trocar_no_quadro(monkeypatch, "_patch_consolidado_session", lambda sid, i, p: estado["patches"].append((i, p)) or True
     )
     estado["preparar"] = preparar
     return estado
@@ -62,14 +63,14 @@ def _no_caminhao(estado) -> bool:
 def test_consulta_pendente_pede_confirmacao(ambiente):
     ambiente["preparar"](_linha())
     with pytest.raises(HTTPException) as e:
-        rotas.mover_pedido("s", MoverPedidoSchema(numero_pedido="003060/26/001#005037/26", destino=ambiente["veiculo"]))
+        montagem.mover_pedido("s", MoverPedidoSchema(numero_pedido="003060/26/001#005037/26", destino=ambiente["veiculo"]))
     assert e.value.status_code == 409
     assert not _no_caminhao(ambiente)
 
 
 def test_representante_liberou_no_kanban_carrega_e_registra(ambiente):
     ambiente["preparar"](_linha())
-    r = rotas.mover_pedido(
+    r = montagem.mover_pedido(
         "s",
         MoverPedidoSchema(
             numero_pedido="003060/26/001#005037/26", destino=ambiente["veiculo"],
@@ -89,7 +90,7 @@ def test_representante_liberou_no_kanban_carrega_e_registra(ambiente):
 def test_linha_travada_nao_sobe_nem_forcando(ambiente, campos):
     ambiente["preparar"](_linha(**campos))
     with pytest.raises(HTTPException) as e:
-        rotas.mover_pedido(
+        montagem.mover_pedido(
             "s",
             MoverPedidoSchema(
                 numero_pedido="003060/26/001#005037/26", destino=ambiente["veiculo"],

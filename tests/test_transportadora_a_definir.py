@@ -1,6 +1,9 @@
 """'TRANSPORTADORA A DEFINIR': a linha fica no representante até ele liberar e dizer qual é."""
 from __future__ import annotations
 
+from tests.conftest import trocar_no_quadro  # noqa: E402
+import api.servicos.quadro as servico_quadro  # noqa: E402
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -61,7 +64,7 @@ def quadro(tmp_path, monkeypatch):
     from api.session_store import store
 
     monkeypatch.setattr(store, "base_dir", tmp_path, raising=False)
-    monkeypatch.setattr(rs, "carregar_transportadoras", lambda: BASE)
+    trocar_no_quadro(monkeypatch, "carregar_transportadoras", lambda: BASE)
     sid = store.create_session()
     store.save_ingestao(sid, {"consolidados": [_linha()]})
     return TestClient(app), sid, store, rs
@@ -93,9 +96,9 @@ def test_ao_liberar_no_quadro_troca_a_copia_do_card(quadro):
             "pendencias": "CONSULTA_REPRESENTANTE"}
     store.save_roteirizacao(sid, {"rotas": [], "itens_por_veiculo": {}, "backlog": [], "backlog_futuro": [card],
                                   "backlog_local": []}, desfazivel=False)
-    assert rs._definir_transportadora(sid, ["005237/26/001#008325/26@P1"], "01073") == ["005237/26/001#008325/26"]
+    assert servico_quadro._definir_transportadora(sid, ["005237/26/001#008325/26@P1"], "01073") == ["005237/26/001#008325/26"]
     novo = store.load_roteirizacao(sid)["backlog_futuro"][0]
     assert novo["cidade_destino"] == "SAO PAULO" and novo["transportadora"] == "RODOVIASUL"
     assert novo["enriquecido_mestre"] == "HUB"
     # já definida: chamar de novo não mexe
-    assert rs._definir_transportadora(sid, ["005237/26/001#008325/26"], "1073") == []
+    assert servico_quadro._definir_transportadora(sid, ["005237/26/001#008325/26"], "1073") == []
