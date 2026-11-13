@@ -12,6 +12,8 @@ where git >nul 2>&1 && (
   echo Buscando atualizacoes no GitHub...
   git pull -q --ff-only >nul 2>&1 || echo [AVISO] Nao consegui atualizar o codigo agora - seguindo com a versao local.
 )
+rem Garante o codigo igual ao do GitHub (mesmo se o pull acima falhar)
+call scripts\atualizar_codigo.bat
 call scripts\sincronizar_dados.bat
 
 rem IA local: troque o modelo aqui se quiser testar outro (ex.: qwen2.5:7b)
