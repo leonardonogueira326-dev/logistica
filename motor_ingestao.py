@@ -31,6 +31,11 @@ from extrator_pdf import (
 )
 from memoria_operacional import consultar_memoria
 from frases import carregar as carregar_frases, frete_ensinado, industrializacao_ensinada
+from transportadoras import (
+    campos_da_linha as campos_transportadora,
+    carregar as carregar_transportadoras,
+    endereco_transportadora,
+)
 from destino_entrega import (
     destino_remessa,
     detectar_entrega,
@@ -90,6 +95,7 @@ class MotorIngestao:
         self._representantes: dict[str, dict[str, str]] | None = None
         self._representantes_aprendidos = carregar_aprendidos()
         self._lookup_clientes = obter_lookup_clientes(str(self.pasta_dados))
+        self._transportadoras = carregar_transportadoras()
         self._cadastro_geo = carregar_cadastro_geolocalizado()
         self._caminho_cadastro_mestre = str(resolver_arquivo_cadastro(str(self.pasta_dados)) or "")
         if not self._lookup_clientes:
@@ -281,20 +287,21 @@ class MotorIngestao:
             mestre = self._lookup_clientes.get(chave) if chave else None
 
             if pedido.tipo_frete == "ENTREGA_TERCEIRO_HUB":
-                cidade_hub = extrair_cidade_transportadora(pedido.transportadora)
-                if cidade_hub:
-                    pedido.cidade_destino = normalizar_texto(cidade_hub)
-                    pedido.cidade = pedido.cidade_destino
-                else:
+                # Levar na transportadora: o destino é a transportadora (base > PDF)
+                info = endereco_transportadora(
+                    pedido.transportadora_codigo, pedido.transportadora, self._transportadoras
+                )
+                for campo, valor in campos_transportadora(info, self.params).items():
+                    if hasattr(pedido, campo):
+                        setattr(pedido, campo, valor)
+                if not info.get("cidade"):
                     self.avisos.append(
-                        f"Pedido {pedido.numero_pedido}: HUB sem cidade na linha Transp."
+                        f"Pedido {pedido.numero_pedido}: transportadora {info.get('nome')} sem endereço "
+                        "(cadastre na base de transportadoras)."
                     )
+                    pedido.rota_logistica = "ROTA_OUTROS"
                 if mestre:
                     pedido.representante = mestre["representante"]
-                pedido.enriquecido_mestre = "HUB" if cidade_hub else "NAO"
-                pedido.rota_logistica = resolver_rota_logistica(
-                    pedido.cidade_destino, self.params
-                )
                 return
 
             def _so_letras(t: str) -> str:
@@ -565,6 +572,12 @@ class MotorIngestao:
 
                 self._aplicar_representante(item, pedido)
                 item.obs_recebimento = extrair_restricao_recebimento(item.observacao_comercial)
+                if item.tipo_frete == "ENTREGA_TERCEIRO_HUB":
+                    # o horário que vale é o da transportadora, não o do cliente
+                    horario = endereco_transportadora(
+                        item.transportadora_codigo, item.transportadora, self._transportadoras
+                    ).get("horario", "")
+                    item.obs_recebimento = f"Transportadora recebe: {horario}" if horario else ""
                 self._aplicar_regra_consulta(item, pedido)
                 consolidados.append(item)
             except Exception as exc:
