@@ -1,15 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { getStoredSessionId, setStoredSessionId } from "@/hooks/useLogisticaSession";
 import { Link, useRouterState } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import {
-  LayoutDashboard,
-  Settings2,
-  Upload,
-  ClipboardCheck,
-  TruckIcon,
-  Radio } from "lucide-react";
+import { LayoutDashboard, Settings2, Upload, ClipboardCheck, TruckIcon, Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HistoricoSearch } from "@/components/HistoricoSearch";
 
@@ -38,11 +32,136 @@ function StatusIA() {
       title={data?.mensagem ?? "Verificando IA local…"}
       className={cn(
         "flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-medium",
-        online ? "bg-success/10 border-success/30 text-success" : "bg-muted border-border text-muted-foreground",
+        online
+          ? "bg-success/10 border-success/30 text-success"
+          : "bg-muted border-border text-muted-foreground",
       )}
     >
-      <span className={cn("inline-flex rounded-full h-2 w-2", online ? "bg-success" : "bg-muted-foreground/50")} />
+      <span
+        className={cn(
+          "inline-flex rounded-full h-2 w-2",
+          online ? "bg-success" : "bg-muted-foreground/50",
+        )}
+      />
       {data ? (online ? "IA local: ativa" : "IA local: desligada") : "IA local…"}
+    </div>
+  );
+}
+
+type StatusSinc = {
+  ligado: boolean;
+  estado: string;
+  quando: string;
+  mensagem: string;
+  rodando: boolean;
+};
+
+function useStatusSincronizacao() {
+  return useQuery({
+    queryKey: ["sincronizacao"],
+    queryFn: async () => {
+      const r = await fetch("/api/sincronizacao");
+      return (await r.json()) as StatusSinc;
+    },
+    refetchInterval: 60_000,
+    retry: false,
+  });
+}
+
+function useSincronizarAgora() {
+  const qc = useQueryClient();
+  const [rodando, setRodando] = useState(false);
+  const [erro, setErro] = useState("");
+  const sincronizar = async () => {
+    setRodando(true);
+    setErro("");
+    try {
+      const r = await fetch("/api/sincronizacao", { method: "POST" });
+      const corpo = await r.json();
+      if (!r.ok) setErro(corpo?.detail ?? "Não foi possível sincronizar.");
+      if (corpo?.estado !== undefined) qc.setQueryData(["sincronizacao"], corpo);
+      await qc.invalidateQueries(); // quadro, conferência… com o que veio do outro PC
+    } catch {
+      setErro("Não foi possível sincronizar.");
+    } finally {
+      setRodando(false);
+    }
+  };
+  return { sincronizar, rodando, erro };
+}
+
+/** Selo no topo: quando sincronizou + botão "Sincronizar agora". */
+function StatusSincronizacao() {
+  const { data } = useStatusSincronizacao();
+  const { sincronizar, rodando, erro } = useSincronizarAgora();
+  if (!data?.ligado) return null;
+  const ok = data.estado === "OK";
+  const problema = data.estado === "ERRO" || data.estado === "CONFLITO";
+  return (
+    <div className="flex items-center gap-1.5">
+      <div
+        title={erro || data.mensagem || "Sincronização dos dados entre os PCs"}
+        className={cn(
+          "flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-medium",
+          ok && "bg-success/10 border-success/30 text-success",
+          problema && "bg-destructive/10 border-destructive/30 text-destructive",
+          !ok && !problema && "bg-muted border-border text-muted-foreground",
+        )}
+      >
+        <span
+          className={cn(
+            "inline-flex rounded-full h-2 w-2",
+            ok ? "bg-success" : problema ? "bg-destructive" : "bg-muted-foreground/50",
+          )}
+        />
+        {rodando || data.rodando
+          ? "Sincronizando…"
+          : ok
+            ? `Sincronizado ${data.quando.split(" ").pop() ?? ""}`
+            : problema
+              ? "Sincronização com problema"
+              : "Sincronização: ainda não rodou"}
+      </div>
+      <button
+        type="button"
+        disabled={rodando || data.rodando}
+        onClick={() => void sincronizar()}
+        title="Envia os dados deste PC e recebe os do outro"
+        className="rounded-md border px-2 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
+      >
+        {rodando ? "…" : "Sincronizar agora"}
+      </button>
+    </div>
+  );
+}
+
+/** Faixa vermelha quando a última sincronização falhou: os dados deste PC não foram para o outro. */
+function AvisoSincronizacao() {
+  const { data } = useStatusSincronizacao();
+  const { sincronizar, rodando } = useSincronizarAgora();
+  if (!data?.ligado || (data.estado !== "ERRO" && data.estado !== "CONFLITO")) return null;
+  const erro = data.estado === "ERRO";
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 border-b px-6 py-2 text-sm",
+        erro
+          ? "border-destructive/40 bg-destructive/10 text-destructive"
+          : "border-amber-500/40 bg-amber-500/15 text-amber-900",
+      )}
+    >
+      <span className="flex-1">
+        <b>{erro ? "A sincronização falhou" : "Sincronizou com conflito"}</b> ({data.quando}) —{" "}
+        {data.mensagem} {erro && "O outro PC não está vendo o que foi feito aqui."}
+      </span>
+      <button
+        type="button"
+        disabled={rodando}
+        onClick={() => void sincronizar()}
+        className="shrink-0 rounded-md border border-current px-3 py-1 font-semibold disabled:opacity-50"
+      >
+        {rodando ? "Sincronizando…" : "Tentar de novo"}
+      </button>
     </div>
   );
 }
@@ -61,8 +180,8 @@ function AvisoVersao() {
   if (!data?.desatualizado) return null;
   return (
     <div className="border-b border-amber-500/40 bg-amber-500/15 px-6 py-2 text-sm text-amber-900">
-      <b>Tem uma versão nova do sistema.</b> Feche a janela preta e abra o <b>iniciar.bat</b> de novo (depois
-      Ctrl+F5) — até lá você está usando a versão antiga.
+      <b>Tem uma versão nova do sistema.</b> Feche a janela preta e abra o <b>iniciar.bat</b> de
+      novo (depois Ctrl+F5) — até lá você está usando a versão antiga.
     </div>
   );
 }
@@ -122,7 +241,11 @@ function QuadroDoDia() {
       value={atual ?? ""}
       onChange={(e) => e.target.value && abrir(e.target.value)}
     >
-      {!q && <option value="">{quadros?.length ? "Escolher quadro do dia…" : "Nenhum quadro ainda"}</option>}
+      {!q && (
+        <option value="">
+          {quadros?.length ? "Escolher quadro do dia…" : "Nenhum quadro ainda"}
+        </option>
+      )}
       {(quadros ?? []).map((x) => (
         <option key={x.session_id} value={x.session_id}>
           Quadro {rotulo(x)} · {x.linhas} linhas{x.quadro_montado ? "" : " · não montado"}
@@ -187,12 +310,19 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="flex-1 flex flex-col min-w-0">
         <AvisoVersao />
+        <AvisoSincronizacao />
         <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6">
           <div className="flex items-center gap-3">
             <StatusIA />
+            <StatusSincronizacao />
             <QuadroDoDia />
             <div className="text-xs text-muted-foreground hidden lg:block">
-              Operação · {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" })}
+              Operação ·{" "}
+              {new Date().toLocaleDateString("pt-BR", {
+                weekday: "long",
+                day: "2-digit",
+                month: "long",
+              })}
             </div>
           </div>
           <div className="flex items-center gap-3">
