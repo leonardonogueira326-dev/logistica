@@ -67,16 +67,52 @@ export async function definirEquipe(
 ): Promise<MoverPedidoResponse> {
   return request<MoverPedidoResponse>(
     `/sessions/${sessionId}/veiculos/${encodeURIComponent(veiculoId)}/equipe`,
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(equipe) },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(equipe),
+    },
   );
 }
 
 /** Vários cards de uma vez (seleção / cliente inteiro) — um passo só no Desfazer. */
-export async function moverLote(sessionId: string, body: MoverLoteRequest): Promise<MoverPedidoResponse> {
+export async function moverLote(
+  sessionId: string,
+  body: MoverLoteRequest,
+): Promise<MoverPedidoResponse> {
   return request<MoverPedidoResponse>(`/sessions/${sessionId}/mover-lote`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+}
+
+/** Ordem de entrega escolhida pelo operador (chaves das paradas: cliente|cidade). */
+export async function definirOrdem(
+  sessionId: string,
+  veiculoId: string,
+  chaves: string[],
+): Promise<MoverPedidoResponse> {
+  return request<MoverPedidoResponse>(
+    `/sessions/${sessionId}/veiculos/${encodeURIComponent(veiculoId)}/ordem`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chaves }),
+    },
+  );
+}
+
+/** Horário de recebimento do cliente ("" apaga e volta ao padrão). */
+export async function salvarHorarioCliente(
+  sessionId: string,
+  clienteCodigo: string,
+  horario: string,
+): Promise<MoverPedidoResponse> {
+  return request<MoverPedidoResponse>(`/sessions/${sessionId}/horario-cliente`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cliente_codigo: clienteCodigo, horario }),
   });
 }
 
@@ -86,7 +122,10 @@ export async function desfazerQuadro(sessionId: string): Promise<MoverPedidoResp
 }
 
 /** Melhor ordem de entrega (OR-Tools) de um caminhão ou de todos os abertos. */
-export async function otimizarSequencia(sessionId: string, veiculoId = ""): Promise<MoverPedidoResponse> {
+export async function otimizarSequencia(
+  sessionId: string,
+  veiculoId = "",
+): Promise<MoverPedidoResponse> {
   return request<MoverPedidoResponse>(`/sessions/${sessionId}/otimizar-sequencia`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -102,7 +141,11 @@ export async function fecharVeiculo(
 ): Promise<MoverPedidoResponse> {
   return request<MoverPedidoResponse>(
     `/sessions/${sessionId}/veiculos/${encodeURIComponent(veiculoId)}/fechar`,
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fechado }) },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fechado }),
+    },
   );
 }
 
@@ -114,15 +157,25 @@ export async function marcarNaoSaiu(
 ): Promise<MoverPedidoResponse> {
   return request<MoverPedidoResponse>(
     `/sessions/${sessionId}/veiculos/${encodeURIComponent(veiculoId)}/nao-saiu`,
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nao_saiu: naoSaiu }) },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nao_saiu: naoSaiu }),
+    },
   );
 }
 
 /** Primeira vez monta o quadro; depois só sugere (não desfaz). recomecar=true refaz do zero. */
-export async function roteirizarQuadro(sessionId: string, recomecar = false): Promise<Roteirizacao> {
-  return request<Roteirizacao>(`/sessions/${sessionId}/roteirizar${recomecar ? "?recomecar=true" : ""}`, {
-    method: "POST",
-  });
+export async function roteirizarQuadro(
+  sessionId: string,
+  recomecar = false,
+): Promise<Roteirizacao> {
+  return request<Roteirizacao>(
+    `/sessions/${sessionId}/roteirizar${recomecar ? "?recomecar=true" : ""}`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export async function ingestSession(sessionId: string): Promise<IngestaoResponse> {
@@ -202,8 +255,7 @@ export async function exportarRomaneioCaminhao(
   const disposition = res.headers.get("Content-Disposition") ?? "";
   const match = disposition.match(/filename="?([^";\n]+)"?/i);
   const hoje = new Date().toISOString().slice(0, 10);
-  const filename =
-    match?.[1] ?? `Romaneio_Caminhao_${caminhaoId}_${hoje}.xlsx`;
+  const filename = match?.[1] ?? `Romaneio_Caminhao_${caminhaoId}_${hoje}.xlsx`;
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -373,7 +425,9 @@ export async function anteciparPedido(
     body: JSON.stringify(body),
   });
 }
-export async function criarPedidoManual(body: PedidoManualBody): Promise<{ ok: boolean; message: string }> {
+export async function criarPedidoManual(
+  body: PedidoManualBody,
+): Promise<{ ok: boolean; message: string }> {
   return request("/pedidos-manuais", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

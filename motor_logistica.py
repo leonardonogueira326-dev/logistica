@@ -86,6 +86,8 @@ class MotorLogistica:
         # vid -> assinatura (ids na ordem) da última "Otimizar sequência";
         # se a carga mudou depois, a ordem deixa de valer como otimizada.
         self.sequencia_otimizada: dict[str, str] = {}
+        # vid -> {assinatura, saida, volta, paradas: {chave: {chegada, espera, atraso, janela, origem}}}
+        self.agenda: dict[str, dict[str, Any]] = {}
         self._cache_mapa_corredor: dict[str, int] = {}
 
     @staticmethod
@@ -1286,6 +1288,7 @@ class MotorLogistica:
             "veiculos_nao_sairam": list(self.veiculos_nao_sairam),
             "equipe_por_veiculo": dict(self.equipe_por_veiculo),
             "sequencia_otimizada": dict(self.sequencia_otimizada),
+            "agenda": dict(self.agenda),
             "metricas_retorno": metricas_retorno,
         }
 

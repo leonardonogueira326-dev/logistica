@@ -73,6 +73,12 @@ def _seed_configuracao() -> dict[str, Any]:
             "tempo_almoco_minutos": int(params.get("tempo_almoco_minutos", 60)),
             "jornada_maxima_minutos": int(params.get("jornada_maxima_minutos", 600)),
             "velocidade_media_kmh": int(config.VELOCIDADE_MEDIA_KMH),
+            # cliente sem horário na observação nem salvo: recebe neste horário
+            "recebimento_padrao": "08:00 às 17:00",
+            # fábrica -> 1ª parada e volta (de madrugada a estrada é livre)
+            "velocidade_estrada_kmh": 75,
+            # começa pela parada mais longe da fábrica e vai voltando para casa
+            "entrega_de_fora_para_dentro": True,
             "turnos": [
                 {"nome": "Expediente", "saida": "07:00", "fim": "17:00"},
             ],
@@ -282,6 +288,9 @@ def configuracao_para_parametros(cfg: dict[str, Any] | None = None) -> dict[str,
         "inicio_expediente": horarios.get("inicio_expediente", config.HORARIO_IN_EXPEDIENTE),
         "limite_retorno": horarios.get("limite_retorno", config.HORARIO_LIMITE_RETORNO),
         "velocidade_media_kmh": int(horarios.get("velocidade_media_kmh", config.VELOCIDADE_MEDIA_KMH)),
+        "recebimento_padrao": str(horarios.get("recebimento_padrao") or "08:00 às 17:00"),
+        "velocidade_estrada_kmh": int(horarios.get("velocidade_estrada_kmh") or 75),
+        "entrega_de_fora_para_dentro": bool(horarios.get("entrega_de_fora_para_dentro", True)),
         "peso_max_spyder_no_bau_kg": float(operacao.get("peso_max_spyder_no_bau_kg", 800)),
         "permitir_spyder_no_bau": bool(operacao.get("permitir_spyder_no_bau", True)),
         "comprimentos_longos_mm": operacao.get("comprimentos_longos_mm", "4800, 5900"),

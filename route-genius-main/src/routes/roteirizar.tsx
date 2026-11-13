@@ -29,7 +29,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getStoredSessionId, useLogisticaSession } from "@/hooks/useLogisticaSession";
 import {
+  definirOrdem,
   desfazerQuadro,
+  salvarHorarioCliente,
   exportarRomaneio,
   exportarRomaneioCaminhao,
   moverLote,
@@ -286,6 +288,21 @@ function RoteirizarPage() {
     }
   };
 
+  const handleOrdem = async (veiculoId: string, chaves: string[]) => {
+    if (!sessionId) return;
+    try {
+      aplicar(await definirOrdem(sessionId, veiculoId, chaves));
+    } catch (e) {
+      setLastWarning(e instanceof Error ? e.message : "Não foi possível mudar a ordem.");
+    }
+  };
+
+  /** Erro volta para o diálogo (mostra lá), sucesso atualiza o quadro. */
+  const handleHorarioCliente = async (clienteCodigo: string, horario: string) => {
+    if (!sessionId) return;
+    aplicar(await salvarHorarioCliente(sessionId, clienteCodigo, horario));
+  };
+
   const handleOtimizarVeiculo = async (veiculoId: string) => {
     if (!sessionId) return;
     try {
@@ -377,6 +394,8 @@ function RoteirizarPage() {
       onMoverLote={handleMoverLote}
       onDesfazer={() => void handleDesfazer()}
       onOtimizarVeiculo={handleOtimizarVeiculo}
+      onOrdem={handleOrdem}
+      onHorarioCliente={handleHorarioCliente}
       onVerMapa={() => setVisualizacao(visualizacao === "kanban" ? "lado" : visualizacao)}
       compacto={visualizacao === "lado"}
       busca={busca}

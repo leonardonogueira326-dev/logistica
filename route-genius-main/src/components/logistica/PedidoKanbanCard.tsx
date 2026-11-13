@@ -10,10 +10,75 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { idCarga, type ItemRota } from "@/lib/logistica-types";
+import { idCarga, type AgendaParada, type ItemRota } from "@/lib/logistica-types";
 import { cn } from "@/lib/utils";
 import { textoPendenteDesde } from "@/lib/mensagens";
 import { apelido as apelidoCliente } from "@/lib/montagem";
+
+export type AcoesParada = {
+  primeiro?: () => void;
+  subir?: () => void;
+  descer?: () => void;
+  horario?: () => void;
+};
+
+const fmtEspera = (min: number) =>
+  min >= 60 ? `${Math.floor(min / 60)}h${String(min % 60).padStart(2, "0")}` : `${min} min`;
+const ORIGEM_JANELA: Record<string, string> = {
+  observacao: "obs.",
+  cliente: "cliente",
+  padrao: "padrão",
+};
+
+/** "chega 06:53 · espera 1h37 · recebe 08:30–11:30 (obs.)" */
+export function LinhaAgenda({ a }: { a?: AgendaParada }) {
+  if (!a?.chegada) return null;
+  const atrasado = a.atraso_min > 0;
+  return (
+    <div
+      className={cn(
+        "mt-1 flex items-start gap-1 rounded px-1.5 py-0.5 text-[11px]",
+        atrasado
+          ? "bg-destructive/10 font-semibold text-destructive"
+          : "bg-muted/60 text-foreground/80",
+      )}
+      title="Horário previsto: saída da fábrica, estrada, descarga e horário de recebimento do cliente"
+    >
+      <Clock className="mt-0.5 h-3 w-3 shrink-0" />
+      <span>
+        chega <b>{a.chegada}</b>
+        {a.espera_min > 0 && <> · espera {fmtEspera(a.espera_min)}</>}
+        {atrasado && <> · {fmtEspera(a.atraso_min)} depois do horário</>}
+        {a.janela && (
+          <span className="text-muted-foreground">
+            {" "}
+            · recebe {a.janela} ({ORIGEM_JANELA[a.origem_janela] ?? a.origem_janela})
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/** Itens de ordem/horário no topo do menu ⋯ da parada. */
+export function ItensAcoesParada({ acoes }: { acoes?: AcoesParada }) {
+  if (!acoes) return null;
+  return (
+    <>
+      {acoes.primeiro && (
+        <DropdownMenuItem onClick={acoes.primeiro}>Entregar primeiro</DropdownMenuItem>
+      )}
+      {acoes.subir && <DropdownMenuItem onClick={acoes.subir}>Subir uma parada</DropdownMenuItem>}
+      {acoes.descer && (
+        <DropdownMenuItem onClick={acoes.descer}>Descer uma parada</DropdownMenuItem>
+      )}
+      {acoes.horario && (
+        <DropdownMenuItem onClick={acoes.horario}>Horário de recebimento…</DropdownMenuItem>
+      )}
+      <DropdownMenuSeparator />
+    </>
+  );
+}
 
 export type CardPedido = ItemRota | Record<string, string>;
 
@@ -46,6 +111,8 @@ export function PedidoKanbanCard({
   semLocal,
   idsArrasto,
   compacto,
+  agendaParada,
+  acoesParada,
 }: {
   pedido: CardPedido;
   columnId: string;
@@ -75,6 +142,10 @@ export function PedidoKanbanCard({
   idsArrasto?: string[];
   /** Dentro de uma parada com várias linhas: sem repetir cliente e endereço */
   compacto?: boolean;
+  /** Horário previsto desta parada */
+  agendaParada?: AgendaParada;
+  /** Ordem / horário do cliente (menu ⋯) */
+  acoesParada?: AcoesParada;
 }) {
   const id = getCardId(pedido);
   const raw = pedido as Record<string, string>;
@@ -188,6 +259,7 @@ export function PedidoKanbanCard({
                 {bairro && cidade ? ", " : ""}
                 {cidade}
               </div>
+              <LinhaAgenda a={agendaParada} />
               {semLocal && (
                 <div className="mt-1 inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
                   <MapPinOff className="w-3 h-3" /> Sem localização no mapa
@@ -292,6 +364,7 @@ export function PedidoKanbanCard({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <ItensAcoesParada acoes={acoesParada} />
             {isFuturo && onAntecipar && (
               <>
                 <DropdownMenuItem onClick={() => onAntecipar(id)}>

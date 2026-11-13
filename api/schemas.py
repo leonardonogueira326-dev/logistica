@@ -241,6 +241,7 @@ class RoteirizacaoSchema(BaseModel):
     # vid -> {nome, ordem_otimizada, sem_localizacao: [id_carga], sugestao_corredor}
     painel_veiculos: dict[str, dict[str, Any]] = Field(default_factory=dict)
     sequencia_otimizada: dict[str, str] = Field(default_factory=dict)
+    agenda: dict[str, Any] = Field(default_factory=dict)
     # motoristas / ajudantes / placas já usados
     equipe_nomes: dict[str, list[str]] = Field(default_factory=dict)
     desfazer_disponivel: int = 0
@@ -375,6 +376,12 @@ class HorariosSetupSchema(BaseModel):
     tempo_almoco_minutos: int = 60
     jornada_maxima_minutos: int = 600
     velocidade_media_kmh: int = 42
+    # fábrica -> 1ª parada e volta (de madrugada)
+    velocidade_estrada_kmh: int = 75
+    # cliente sem horário na observação nem salvo
+    recebimento_padrao: str = "08:00 às 17:00"
+    # começa pela parada mais longe da fábrica e vai voltando
+    entrega_de_fora_para_dentro: bool = True
     turnos: list[TurnoSchema] = Field(default_factory=list)
 
 
