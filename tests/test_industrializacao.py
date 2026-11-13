@@ -1,6 +1,8 @@
 """Remessa para industrialização: detectada sozinha, escolhida na caixa de frete ou ensinada."""
 from __future__ import annotations
 
+from tests.conftest import trocar_no_quadro  # noqa: E402
+
 import json
 
 import pytest
@@ -61,7 +63,7 @@ def quadro(tmp_path, monkeypatch):
     from api.session_store import store
 
     monkeypatch.setattr(store, "base_dir", tmp_path, raising=False)
-    monkeypatch.setattr(rs, "obter_lookup_clientes", lambda _p: BASE)
+    trocar_no_quadro(monkeypatch, "obter_lookup_clientes", lambda _p: BASE)
     sid = store.create_session()
     linha = {
         "numero_pedido": "004773/26/001", "numero_pedido_norm": "004773/26/001", "id_item": "004773/26/001#008080/26",

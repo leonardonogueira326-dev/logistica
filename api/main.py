@@ -13,6 +13,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from api.routers.sessions import router as sessions_router  # noqa: E402
+from api.routers.quadro_mapa import router as quadro_mapa_router  # noqa: E402
+from api.routers.quadro_montagem import router as quadro_montagem_router  # noqa: E402
 from api.routers.config import router as config_router  # noqa: E402
 from api.routers.setup import router as setup_router  # noqa: E402
 from api.routers.historico import router as historico_router  # noqa: E402
@@ -42,6 +44,8 @@ app.add_middleware(
 )
 
 app.include_router(sessions_router)
+app.include_router(quadro_mapa_router)
+app.include_router(quadro_montagem_router)
 app.include_router(config_router)
 app.include_router(setup_router)
 app.include_router(historico_router)

@@ -1,6 +1,8 @@
 """Levar na transportadora: endereço da base > endereço do PDF > aviso de cadastro."""
 from __future__ import annotations
 
+from tests.conftest import trocar_no_quadro  # noqa: E402
+
 import openpyxl
 import pytest
 from fastapi.testclient import TestClient
@@ -85,7 +87,7 @@ def quadro(tmp_path, monkeypatch):
     from api.session_store import store
 
     monkeypatch.setattr(store, "base_dir", tmp_path, raising=False)
-    monkeypatch.setattr(rs, "endereco_transportadora", lambda cod, txt: tr.endereco_transportadora(cod, txt, {}))
+    trocar_no_quadro(monkeypatch, "endereco_transportadora", lambda cod, txt: tr.endereco_transportadora(cod, txt, {}))
     sid = store.create_session()
     linha = {
         "numero_pedido": "005285/26/001", "numero_pedido_norm": "005285/26/001", "id_item": "X#1",

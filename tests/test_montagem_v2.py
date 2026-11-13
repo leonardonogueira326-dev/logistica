@@ -47,7 +47,7 @@ def test_ordem_otimizada_expira_quando_a_carga_muda():
 
 
 def test_caminhoes_de_mesmo_nome_ganham_numero():
-    from api.routers.sessions import _nomes_veiculos
+    from api.servicos.quadro import _nomes_veiculos
 
     assert _nomes_veiculos(_motor()) == {"11.180_BAU_1": "11.180 - BAÚ · 1", "11.180_BAU_2": "11.180 - BAÚ · 2"}
 
