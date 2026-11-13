@@ -396,7 +396,7 @@ function BarraLocalizacao({
       {status?.erro && <span className="text-destructive text-xs">{status.erro}</span>}
       {status?.sem_endereco_na_base && (
         <span className="text-amber-700 text-xs">
-          Coloque a base-de-clientes1.xlsx (com endereço) na pasta do sistema.
+          Base de clientes sem endereço: sincronize os dados (base-de-clientes.xlsx).
         </span>
       )}
       {!!status?.nao_achados?.length && (

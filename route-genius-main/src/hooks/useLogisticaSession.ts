@@ -23,7 +23,16 @@ import {
   definirEquipe,
   uploadSession,
 } from "@/lib/api-client";
-import type { EquipeVeiculo, AnteciparPedidoBody, ConsolidadoPatch, ConsultaRepresentanteRequest, LiberacaoComercialRequest, OperacaoDivisao, MoverPedidoRequest, Roteirizacao } from "@/lib/logistica-types";
+import type {
+  EquipeVeiculo,
+  AnteciparPedidoBody,
+  ConsolidadoPatch,
+  ConsultaRepresentanteRequest,
+  LiberacaoComercialRequest,
+  OperacaoDivisao,
+  MoverPedidoRequest,
+  Roteirizacao,
+} from "@/lib/logistica-types";
 import { COLUMN_BACKLOG } from "@/lib/logistica-types";
 import { optimisticMoveRoteirizacao } from "@/lib/optimistic-move";
 import { SESSION_KEY } from "@/lib/logistica-types";
@@ -45,9 +54,7 @@ export function useLogisticaSession(sessionId: string | null) {
     queryFn: () => getConsolidados(sessionId!),
     enabled: !!sessionId,
     refetchInterval: (query) =>
-      query.state.data?.consolidados.some((c) => c.status_ia === "PROCESSANDO_IA")
-        ? 2000
-        : false,
+      query.state.data?.consolidados.some((c) => c.status_ia === "PROCESSANDO_IA") ? 2000 : false,
   });
 
   const roteirizacaoQuery = useQuery({
@@ -55,6 +62,9 @@ export function useLogisticaSession(sessionId: string | null) {
     queryFn: () => getRoteirizacao(sessionId!),
     enabled: !!sessionId,
     retry: false,
+    // Enquanto o sistema localiza clientes no mapa, atualiza sozinho
+    refetchInterval: (q) =>
+      Object.values(q.state.data?.painel_veiculos ?? {}).some((p) => p.localizando) ? 4000 : false,
   });
 
   const uploadMutation = useMutation({
@@ -102,24 +112,45 @@ export function useLogisticaSession(sessionId: string | null) {
   });
 
   const fecharMutation = useMutation({
-    mutationFn: ({ sid, veiculoId, fechado }: { sid: string; veiculoId: string; fechado: boolean }) =>
-      fecharVeiculo(sid, veiculoId, fechado),
+    mutationFn: ({
+      sid,
+      veiculoId,
+      fechado,
+    }: {
+      sid: string;
+      veiculoId: string;
+      fechado: boolean;
+    }) => fecharVeiculo(sid, veiculoId, fechado),
     onSuccess: (data, { sid }) => {
       queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
     },
   });
 
   const naoSaiuMutation = useMutation({
-    mutationFn: ({ sid, veiculoId, naoSaiu }: { sid: string; veiculoId: string; naoSaiu: boolean }) =>
-      marcarNaoSaiu(sid, veiculoId, naoSaiu),
+    mutationFn: ({
+      sid,
+      veiculoId,
+      naoSaiu,
+    }: {
+      sid: string;
+      veiculoId: string;
+      naoSaiu: boolean;
+    }) => marcarNaoSaiu(sid, veiculoId, naoSaiu),
     onSuccess: (data, { sid }) => {
       queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
     },
   });
 
   const equipeMutation = useMutation({
-    mutationFn: ({ sid, veiculoId, equipe }: { sid: string; veiculoId: string; equipe: EquipeVeiculo }) =>
-      definirEquipe(sid, veiculoId, equipe),
+    mutationFn: ({
+      sid,
+      veiculoId,
+      equipe,
+    }: {
+      sid: string;
+      veiculoId: string;
+      equipe: EquipeVeiculo;
+    }) => definirEquipe(sid, veiculoId, equipe),
     onSuccess: (data, { sid }) => {
       queryClient.setQueryData(["roteirizacao", sid], data.roteirizacao);
     },

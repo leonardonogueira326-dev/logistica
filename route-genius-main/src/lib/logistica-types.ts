@@ -309,6 +309,8 @@ export interface PainelVeiculo {
   ordem_otimizada: boolean;
   /** id_carga das cargas sem localização no mapa */
   sem_localizacao: string[];
+  /** O sistema está buscando essas localizações agora (sozinho, em segundo plano) */
+  localizando?: boolean;
   sugestao_corredor: string;
   sugestao_ids?: string[];
   sugestao_destino?: string;

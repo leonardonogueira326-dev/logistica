@@ -119,7 +119,9 @@ export function checklist(
       texto:
         semLocal === 0
           ? "Todas as paradas no mapa"
-          : `${semLocal} carga(s) sem localização no mapa`,
+          : painel?.localizando
+            ? `Localizando ${semLocal} carga(s) no mapa…`
+            : `${semLocal} carga(s) sem localização no mapa`,
       acao: "localizar",
     },
     {
