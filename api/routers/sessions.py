@@ -35,6 +35,7 @@ from api.schemas import (  # noqa: E402
     FecharVeiculoSchema,
     NaoSaiuSchema,
     MoverPedidoSchema,
+    MoverLoteSchema,
     MoverPedidoResponseSchema,
     PedidoConsolidadoSchema,
     ResumoIngestaoSchema,
@@ -60,7 +61,7 @@ from pendencias import (  # noqa: E402
     pendencias as calc_pendencias,
 )
 from representantes import aprender_representante  # noqa: E402
-from equipe import equipe_inicial, frota_cadastrada, lembrar  # noqa: E402
+from equipe import guardar_nomes, nomes_conhecidos, equipe_inicial, frota_cadastrada, lembrar  # noqa: E402
 from romaneio_planilha import gerar_romaneio_planilha  # noqa: E402
 import geocodificacao  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
@@ -147,9 +148,44 @@ def _nomes_veiculos(motor: MotorLogistica) -> dict[str, str]:
     for r in motor.rotas:
         contagem[r.veiculo_nome] = contagem.get(r.veiculo_nome, 0) + 1
     return {
-        r.veiculo_id: (r.veiculo_nome if contagem[r.veiculo_nome] == 1 else f"{r.veiculo_nome} ({r.veiculo_id})")
+        r.veiculo_id: (r.veiculo_nome if contagem[r.veiculo_nome] == 1 else f"{r.veiculo_nome} · {_numero_veiculo(motor, r)}")
         for r in motor.rotas
     }
+
+
+def _numero_veiculo(motor: MotorLogistica, rota: Any) -> str:
+    """1, 2… entre os caminhões de mesmo nome (pela ordem do cadastro)."""
+    iguais = [r.veiculo_id for r in motor.rotas if r.veiculo_nome == rota.veiculo_nome]
+    return str(iguais.index(rota.veiculo_id) + 1)
+
+
+def _painel_veiculos(motor: MotorLogistica, session_id: str) -> dict[str, dict[str, Any]]:
+    """Por caminhão: nome sem ambiguidade, ordem otimizada?, paradas sem localização, sugestão de corredor."""
+    nomes = _nomes_veiculos(motor)
+    try:
+        consolidados = {l.get("id_item"): l for l in _linhas_do_quadro(session_id)}
+    except HTTPException:
+        consolidados = {}
+    cache, base = _geo_contexto()
+    painel: dict[str, dict[str, Any]] = {}
+    for rota in motor.rotas:
+        vid = rota.veiculo_id
+        sem_local: list[str] = []
+        for grupo in (motor.itens_por_veiculo.get(vid, []), motor.itens_retorno_por_veiculo.get(vid, [])):
+            for it in grupo:
+                linha = {**consolidados.get(it.id_item, {}), **{k: v for k, v in asdict(it).items() if v}}
+                if not geocodificacao.coordenada_da_linha(linha, cache, base):
+                    sem_local.append(it.id_carga or it.id_item or it.numero_pedido)
+        sug = motor.sugestao_corredor(vid, nomes) if rota.alerta_elastico else {"texto": "", "ids": [], "destino": ""}
+        painel[vid] = {
+            "nome": nomes.get(vid, rota.veiculo_nome),
+            "ordem_otimizada": motor.ordem_otimizada(vid),
+            "sem_localizacao": sem_local,
+            "sugestao_corredor": sug["texto"],
+            "sugestao_ids": sug["ids"],
+            "sugestao_destino": sug["destino"],
+        }
+    return painel
 
 
 _COLUNAS_NAO_VEICULO = {
@@ -231,6 +267,9 @@ def _roteirizacao_from_motor(
         session_id=session_id,
         jornada_maxima_minutos=int(params.get("jornada_maxima_minutos", 600)),
         mensagem=mensagem,
+        painel_veiculos=_painel_veiculos(motor, session_id),
+        equipe_nomes=nomes_conhecidos(),
+        desfazer_disponivel=getattr(store, "qtd_desfazer", lambda _sid: 0)(session_id),
         **data,
     )
 
@@ -254,6 +293,7 @@ def _motor_from_roteirizacao(data: dict[str, Any]) -> MotorLogistica:
     motor.veiculos_fechados = list(data.get("veiculos_fechados", []))
     motor.veiculos_nao_sairam = list(data.get("veiculos_nao_sairam", []))
     motor.equipe_por_veiculo = dict(data.get("equipe_por_veiculo", {}))
+    motor.sequencia_otimizada = dict(data.get("sequencia_otimizada", {}))
     return motor
 
 
@@ -926,11 +966,16 @@ def otimizar_sequencia(session_id: str, body: _OtimizarBody) -> MoverPedidoRespo
             r = otimizar(list(paradas.values()), deposito, inicio_min,
                          descarga_min=int(params.get("tempo_descarga_minutos", 20)))
             m.aplicar_sequencia(vid, r["ordem"])
-            texto = f"{nomes.get(vid, vid)}: {r['km_antes']:.0f} km → {r['km_depois']:.0f} km"
-            partes.append(texto + (f" ({r['aviso']})" if r["aviso"] else ""))
+            m.recalcular_metricas(vid)
+            m.sequencia_otimizada[vid] = m.assinatura_carga(vid)
+            sem_local = sum(1 for p in paradas.values() if p["lat"] is None)
+            texto = f"{nomes.get(vid, vid)}: {r['km_depois']:.0f} km"
+            if sem_local:
+                texto += f" ({sem_local} sem localização no fim)"
+            partes.append(texto)
         if not partes:
             return True, "Nada para otimizar (caminhões com menos de 2 paradas ou fechados)."
-        return True, "Sequência otimizada — " + "; ".join(partes) + ". Distância estimada (linha reta × 1,3)."
+        return True, "Ordem de entrega otimizada — " + "; ".join(partes) + "."
 
     return _operar_divisao(session_id, aplicar)
 
@@ -943,6 +988,7 @@ def definir_equipe(session_id: str, veiculo_id: str, body: EquipeVeiculoSchema) 
         dados = {k: getattr(body, k).strip().upper() for k in ("motorista", "ajudante", "placa")}
         m.equipe_por_veiculo[veiculo_id] = dados
         lembrar(veiculo_id, dados)
+        guardar_nomes(dados)
         return True, "Equipe salva."
 
     return _operar_divisao(session_id, aplicar)
@@ -1061,6 +1107,80 @@ def habilitar_segunda_viagem(session_id: str, veiculo_id: str) -> RoteirizacaoSc
     payload = motor.para_dict()
     store.save_roteirizacao(session_id, payload)
     return _roteirizacao_from_motor(motor, session_id)
+
+
+@router.post("/{session_id}/desfazer", response_model=MoverPedidoResponseSchema)
+def desfazer(session_id: str) -> MoverPedidoResponseSchema:
+    """Volta o quadro para antes da última mudança (mover, dividir, sugerir, otimizar…)."""
+    anterior = store.desfazer_roteirizacao(session_id)
+    if anterior is None:
+        raise HTTPException(status_code=400, detail="Nada para desfazer.")
+    motor = _motor_from_roteirizacao(anterior)
+    _enriquecer_teo_motor(motor)
+    return MoverPedidoResponseSchema(
+        ok=True, warning="Última mudança desfeita.", roteirizacao=_roteirizacao_from_motor(motor, session_id)
+    )
+
+
+@router.post("/{session_id}/mover-lote", response_model=MoverPedidoResponseSchema)
+def mover_lote(session_id: str, body: MoverLoteSchema) -> MoverPedidoResponseSchema:
+    """
+    Vários cards de uma vez (seleção múltipla / cliente inteiro). Um passo só no
+    "Desfazer". O que não pode ir (travado, precisa do representante, sem espaço
+    sem forçar) fica onde está e é avisado.
+    """
+    data = store.load_roteirizacao(session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Roteirização não executada.")
+    motor = _motor_from_roteirizacao(data)
+    para_veiculo = body.destino.upper() not in _COLUNAS_NAO_VEICULO
+    try:
+        _, consolidados, _ = _get_active_consolidados(session_id)
+    except HTTPException:
+        consolidados = []
+    limite = _limite_consulta()
+    movidos, ficaram, liberados = 0, [], []
+    for id_carga in dict.fromkeys(body.ids):
+        ref = next((c for c in consolidados if mesma_linha(c, id_carga.split("@")[0])), None)
+        nome = (ref.cliente if ref else id_carga)[:30]
+        if para_veiculo and ref is not None:
+            abertas = calc_pendencias(ref, limite)
+            if PAGAMENTO_ANTECIPADO in abertas or PESO_ZERADO in abertas:
+                ficaram.append(f"{nome} (travado)")
+                continue
+            if CONSULTA_REPRESENTANTE in abertas:
+                if not body.liberar_representante:
+                    ficaram.append(f"{nome} (falta o representante liberar)")
+                    continue
+                liberados.append(ref)
+        ok, aviso = motor.mover_pedido(id_carga, body.destino, body.motivo, forcar=body.forcar)
+        if ok:
+            movidos += 1
+        else:
+            ficaram.append(f"{nome} ({aviso or 'não coube'})")
+            if ref in liberados:
+                liberados.remove(ref)
+    if not movidos:
+        raise HTTPException(status_code=400, detail="Nada foi movido: " + "; ".join(ficaram))
+    store.save_roteirizacao(session_id, motor.para_dict())
+    agora = datetime.now(timezone.utc).astimezone().strftime("%d/%m/%Y %H:%M")
+    for ref in liberados:
+        quem = body.autorizado_por.strip() or ref.representante
+        _patch_consolidado_session(
+            session_id,
+            ref.id_item or ref.numero_pedido,
+            {
+                "consulta_representante": "LIBERADO",
+                "consulta_em": agora,
+                "representante_autorizou": quem,
+                "motivo_adiantamento": f"Liberado pelo representante {quem}",
+                "auditoria": (ref.auditoria + f" | CONSULTA REPRESENTANTE {agora}: Liberado por {quem} (Kanban)").strip(" |"),
+            },
+        )
+    aviso = f"{movidos} {'card movido' if movidos == 1 else 'cards movidos'}."
+    if ficaram:
+        aviso += " Ficaram: " + "; ".join(ficaram)
+    return MoverPedidoResponseSchema(ok=True, warning=aviso, roteirizacao=_roteirizacao_from_motor(motor, session_id))
 
 
 @router.post("/{session_id}/mover", response_model=MoverPedidoResponseSchema)

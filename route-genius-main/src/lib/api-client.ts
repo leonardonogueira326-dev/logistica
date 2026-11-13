@@ -10,6 +10,7 @@ import type {
   ConfigResponse,
   ConfiguracaoOperacional,
   ConsolidadoPatch,
+  MoverLoteRequest,
   ConsolidadosList,
   HistoricoResponse,
   IngestaoResponse,
@@ -68,6 +69,20 @@ export async function definirEquipe(
     `/sessions/${sessionId}/veiculos/${encodeURIComponent(veiculoId)}/equipe`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(equipe) },
   );
+}
+
+/** Vários cards de uma vez (seleção / cliente inteiro) — um passo só no Desfazer. */
+export async function moverLote(sessionId: string, body: MoverLoteRequest): Promise<MoverPedidoResponse> {
+  return request<MoverPedidoResponse>(`/sessions/${sessionId}/mover-lote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Volta o quadro para antes da última mudança. */
+export async function desfazerQuadro(sessionId: string): Promise<MoverPedidoResponse> {
+  return request<MoverPedidoResponse>(`/sessions/${sessionId}/desfazer`, { method: "POST" });
 }
 
 /** Melhor ordem de entrega (OR-Tools) de um caminhão ou de todos os abertos. */

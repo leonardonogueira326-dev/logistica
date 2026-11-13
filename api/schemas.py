@@ -238,6 +238,21 @@ class RoteirizacaoSchema(BaseModel):
     mensagem: str = ""
     metricas_retorno: dict[str, dict[str, str | float]] = Field(default_factory=dict)
     jornada_maxima_minutos: int = 600
+    # vid -> {nome, ordem_otimizada, sem_localizacao: [id_carga], sugestao_corredor}
+    painel_veiculos: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    sequencia_otimizada: dict[str, str] = Field(default_factory=dict)
+    # motoristas / ajudantes / placas já usados
+    equipe_nomes: dict[str, list[str]] = Field(default_factory=dict)
+    desfazer_disponivel: int = 0
+
+
+class MoverLoteSchema(BaseModel):
+    ids: list[str]
+    destino: str
+    motivo: str = ""
+    forcar: bool = False
+    liberar_representante: bool = False
+    autorizado_por: str = ""
 
 
 class MoverPedidoSchema(BaseModel):

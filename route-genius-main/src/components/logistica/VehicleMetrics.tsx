@@ -2,13 +2,7 @@ import { Progress } from "@/components/ui/progress";
 import type { RotaVeiculo } from "@/lib/logistica-types";
 import { cn } from "@/lib/utils";
 
-export function VehicleMetrics({
-  rota,
-  jornadaMax,
-}: {
-  rota: RotaVeiculo;
-  jornadaMax: number;
-}) {
+export function VehicleMetrics({ rota, jornadaMax }: { rota: RotaVeiculo; jornadaMax: number }) {
   const pesoPct = pct(rota.capacidade_kg, rota.peso_alocado_kg);
   const tempoMin = parseInt(rota.teo_minutos, 10) || parseInt(rota.tempo_total_min, 10) || 0;
   const teoLabel = rota.teo_hhmm || formatMin(tempoMin);
@@ -17,13 +11,10 @@ export function VehicleMetrics({
   return (
     <div className="space-y-2 px-3 pb-3">
       <MetricBar
-        label={`Peso · ${rota.peso_alocado_kg.toLocaleString("pt-BR")} / ${rota.capacidade_kg.toLocaleString("pt-BR")} kg`}
+        label={`Peso · ${rota.peso_alocado_kg.toLocaleString("pt-BR")} de ${rota.capacidade_kg.toLocaleString("pt-BR")} kg`}
         pct={pesoPct}
       />
-      <MetricBar
-        label={`TEO · ${teoLabel} / ${formatMin(jornadaMax)} · ${rota.qtd_paradas} paradas`}
-        pct={jornadaPct}
-      />
+      <MetricBar label={`Jornada · ${teoLabel} de ${formatMin(jornadaMax)}`} pct={jornadaPct} />
     </div>
   );
 }
